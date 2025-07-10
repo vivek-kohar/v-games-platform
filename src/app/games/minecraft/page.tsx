@@ -12,6 +12,8 @@ export default function MinecraftGame() {
   const router = useRouter()
   const [gameLoaded, setGameLoaded] = useState(false)
   const [saveStatus, setSaveStatus] = useState("")
+  const [roomId, setRoomId] = useState("default")
+  const [showRoomSelector, setShowRoomSelector] = useState(true)
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -32,11 +34,11 @@ export default function MinecraftGame() {
         const savedState = await response.json()
         console.log("Loaded game state:", savedState)
         
-        // Initialize the game with saved state
-        initializeMinecraftGame(savedState)
+        // Initialize the game with saved state and room ID
+        initializeMinecraftGame(savedState, roomId)
       } else {
         // Initialize new game
-        initializeMinecraftGame(null)
+        initializeMinecraftGame(null, roomId)
       }
     } catch (error) {
       console.error("Error loading game:", error)
@@ -44,14 +46,14 @@ export default function MinecraftGame() {
     }
   }
 
-  const initializeMinecraftGame = (savedState: any) => {
+  const initializeMinecraftGame = (savedState: any, selectedRoomId: string) => {
     // Create script element for Phaser
     const phaserScript = document.createElement("script")
     phaserScript.src = "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"
     phaserScript.onload = () => {
       // Create game script
       const gameScript = document.createElement("script")
-      gameScript.textContent = getMinecraftGameCode(savedState)
+      gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
       document.head.appendChild(gameScript)
       setGameLoaded(true)
     }
@@ -107,6 +109,53 @@ export default function MinecraftGame() {
 
   return (
     <div className="min-h-screen bg-gray-900">
+      {/* Room Selection Modal */}
+      {showRoomSelector && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-white mb-4">🎮 Join Multiplayer Room</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Room ID
+                </label>
+                <input
+                  type="text"
+                  value={roomId}
+                  onChange={(e) => setRoomId(e.target.value)}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter room ID (e.g., 'friends', 'public')"
+                />
+              </div>
+              <div className="text-sm text-gray-400">
+                <p>• Use the same Room ID to play with friends</p>
+                <p>• Leave as 'default' to join the public room</p>
+              </div>
+              <div className="flex space-x-3">
+                <Button
+                  onClick={() => {
+                    setShowRoomSelector(false)
+                    loadGame()
+                  }}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700"
+                >
+                  Join Room
+                </Button>
+                <Button
+                  onClick={() => {
+                    setRoomId(\`room-\${Math.random().toString(36).substr(2, 9)}\`)
+                  }}
+                  variant="outline"
+                  className="text-white border-gray-600 hover:bg-gray-700"
+                >
+                  Create New
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Game Header */}
       <header className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -140,6 +189,11 @@ export default function MinecraftGame() {
 
       {/* Game Container */}
       <div className="relative">
+        {/* Set current user ID for multiplayer */}
+        <script dangerouslySetInnerHTML={{
+          __html: \`window.currentUserId = "\${session.user.id}";\`
+        }} />
+        
         <div id="minecraft-game-container" className="flex justify-center items-center min-h-screen">
           {!gameLoaded && (
             <div className="text-white text-lg">Loading Minecraft Game...</div>
@@ -152,16 +206,25 @@ export default function MinecraftGame() {
             <div>Health: <span id="health-display">100</span></div>
             <div>Score: <span id="score-display">0</span></div>
             <div>Selected: <span id="selected-block-display">Grass</span></div>
+            <div className="border-t border-gray-600 pt-2 mt-2">
+              <div className="text-sm text-green-400">🟢 Multiplayer Active</div>
+              <div className="text-xs">Players Online: <span id="players-count">1</span></div>
+            </div>
           </div>
         </div>
 
         <div id="game-instructions" className="absolute top-4 right-4 text-white z-50">
           <div className="bg-black bg-opacity-50 rounded p-3 text-sm space-y-1">
+            <div className="text-yellow-400 font-bold">🎮 Multiplayer Mode</div>
             <div>WASD - Move</div>
             <div>Space - Jump</div>
             <div>Left Click - Place blocks</div>
             <div>Right Click - Break blocks</div>
             <div>1-5 - Select block type</div>
+            <div className="border-t border-gray-600 pt-1 mt-1 text-xs text-gray-300">
+              <div>• Other players appear in red</div>
+              <div>• World changes sync in real-time</div>
+            </div>
           </div>
         </div>
 
@@ -180,7 +243,7 @@ export default function MinecraftGame() {
 }
 
 // Game code as a string to be injected
-function getMinecraftGameCode(savedState: any) {
+function getMinecraftGameCode(savedState: any, selectedRoomId: string) {
   return `
 // Global reference for save/load
 window.minecraftGame = null;
@@ -204,6 +267,12 @@ class MinecraftGame extends Phaser.Scene {
         this.score = 0;
         this.health = 100;
         
+        // Multiplayer state
+        this.roomId = '${selectedRoomId}';
+        this.otherPlayers = new Map();
+        this.lastMultiplayerUpdate = 0;
+        this.multiplayerUpdateInterval = 100; // Update every 100ms
+        
         // Saved state
         this.savedState = ${JSON.stringify(savedState)};
         
@@ -226,11 +295,81 @@ class MinecraftGame extends Phaser.Scene {
                 .generateTexture(blockType, this.BLOCK_SIZE, this.BLOCK_SIZE);
         });
         
-        // Create player texture
-        this.add.graphics()
-            .fillStyle(0xFF5722)
-            .fillRect(0, 0, this.BLOCK_SIZE - 4, this.BLOCK_SIZE - 4)
-            .generateTexture('player', this.BLOCK_SIZE - 4, this.BLOCK_SIZE - 4);
+        // Create boy player sprite
+        this.createBoyPlayerSprite();
+        
+        // Create other player sprite for multiplayer
+        this.createOtherPlayerSprite();
+    }
+    
+    createBoyPlayerSprite() {
+        const graphics = this.add.graphics();
+        const size = this.BLOCK_SIZE - 4;
+        
+        // Body (blue shirt)
+        graphics.fillStyle(0x4A90E2);
+        graphics.fillRect(6, 12, 20, 16);
+        
+        // Head (skin tone)
+        graphics.fillStyle(0xFFDBAE);
+        graphics.fillRect(8, 2, 16, 12);
+        
+        // Hair (brown)
+        graphics.fillStyle(0x8B4513);
+        graphics.fillRect(8, 2, 16, 6);
+        
+        // Eyes
+        graphics.fillStyle(0x000000);
+        graphics.fillRect(11, 6, 2, 2);
+        graphics.fillRect(19, 6, 2, 2);
+        
+        // Legs (dark blue pants)
+        graphics.fillStyle(0x2C3E50);
+        graphics.fillRect(8, 28, 6, 12);
+        graphics.fillRect(18, 28, 6, 12);
+        
+        // Arms (skin tone)
+        graphics.fillStyle(0xFFDBAE);
+        graphics.fillRect(2, 14, 4, 10);
+        graphics.fillRect(26, 14, 4, 10);
+        
+        graphics.generateTexture('player', size, size);
+        graphics.destroy();
+    }
+    
+    createOtherPlayerSprite() {
+        const graphics = this.add.graphics();
+        const size = this.BLOCK_SIZE - 4;
+        
+        // Body (red shirt)
+        graphics.fillStyle(0xE74C3C);
+        graphics.fillRect(6, 12, 20, 16);
+        
+        // Head (skin tone)
+        graphics.fillStyle(0xFFDBAE);
+        graphics.fillRect(8, 2, 16, 12);
+        
+        // Hair (black)
+        graphics.fillStyle(0x2C3E50);
+        graphics.fillRect(8, 2, 16, 6);
+        
+        // Eyes
+        graphics.fillStyle(0x000000);
+        graphics.fillRect(11, 6, 2, 2);
+        graphics.fillRect(19, 6, 2, 2);
+        
+        // Legs (green pants)
+        graphics.fillStyle(0x27AE60);
+        graphics.fillRect(8, 28, 6, 12);
+        graphics.fillRect(18, 28, 6, 12);
+        
+        // Arms (skin tone)
+        graphics.fillStyle(0xFFDBAE);
+        graphics.fillRect(2, 14, 4, 10);
+        graphics.fillRect(26, 14, 4, 10);
+        
+        graphics.generateTexture('otherPlayer', size, size);
+        graphics.destroy();
     }
     
     create() {
@@ -291,7 +430,123 @@ class MinecraftGame extends Phaser.Scene {
         // Update UI
         this.updateUI();
         
+        // Initialize multiplayer
+        this.initializeMultiplayer();
+        
         console.log('Minecraft game loaded successfully');
+    }
+    
+    async initializeMultiplayer() {
+        try {
+            // Join the multiplayer room
+            await this.joinMultiplayerRoom();
+            
+            // Start multiplayer update loop
+            this.multiplayerTimer = this.time.addEvent({
+                delay: this.multiplayerUpdateInterval,
+                callback: this.updateMultiplayer,
+                callbackScope: this,
+                loop: true
+            });
+            
+            console.log('Multiplayer initialized');
+        } catch (error) {
+            console.error('Failed to initialize multiplayer:', error);
+        }
+    }
+    
+    async joinMultiplayerRoom() {
+        const response = await fetch('/api/games/minecraft/multiplayer', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                roomId: this.roomId,
+                action: 'join',
+                data: { x: this.player.x, y: this.player.y }
+            })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            this.updateOtherPlayers(data.players);
+        }
+    }
+    
+    async updateMultiplayer() {
+        try {
+            // Send player position
+            const response = await fetch('/api/games/minecraft/multiplayer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roomId: this.roomId,
+                    action: 'move',
+                    data: { x: this.player.x, y: this.player.y }
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.updateOtherPlayers(data.players);
+            }
+        } catch (error) {
+            console.error('Multiplayer update failed:', error);
+        }
+    }
+    
+    updateOtherPlayers(players) {
+        // Remove old player sprites
+        this.otherPlayers.forEach(playerData => {
+            playerData.sprite.destroy();
+            playerData.nameText.destroy();
+        });
+        this.otherPlayers.clear();
+        
+        // Add current players (excluding self)
+        const otherPlayersList = players.filter(player => player.id !== window.currentUserId);
+        
+        otherPlayersList.forEach(player => {
+            const playerSprite = this.add.sprite(player.x, player.y, 'otherPlayer');
+            playerSprite.setOrigin(0.5, 0.5);
+            
+            // Add player name label
+            const nameText = this.add.text(player.x, player.y - 40, player.name, {
+                fontSize: '12px',
+                color: '#ffffff',
+                backgroundColor: '#000000',
+                padding: { x: 4, y: 2 }
+            });
+            nameText.setOrigin(0.5, 0.5);
+            
+            this.otherPlayers.set(player.id, {
+                sprite: playerSprite,
+                nameText: nameText,
+                targetX: player.x,
+                targetY: player.y
+            });
+        });
+        
+        // Update player count in UI
+        const playersCountEl = document.getElementById('players-count');
+        if (playersCountEl) {
+            playersCountEl.textContent = (otherPlayersList.length + 1).toString();
+        }
+    }
+    
+    async syncWorldState() {
+        try {
+            const response = await fetch('/api/games/minecraft/multiplayer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    roomId: this.roomId,
+                    action: 'placeBlock',
+                    data: { world: this.serializeWorld() }
+                })
+            });
+        } catch (error) {
+            console.error('Failed to sync world state:', error);
+        }
     }
     
     getGameState() {
@@ -390,6 +645,9 @@ class MinecraftGame extends Phaser.Scene {
             this.updateUI();
         }
         
+        // Sync with multiplayer
+        this.syncWorldState();
+        
         return true;
     }
     
@@ -403,6 +661,10 @@ class MinecraftGame extends Phaser.Scene {
         
         this.score += 5;
         this.updateUI();
+        
+        // Sync with multiplayer
+        this.syncWorldState();
+        
         return true;
     }
     
@@ -469,6 +731,20 @@ class MinecraftGame extends Phaser.Scene {
         if (Phaser.Input.Keyboard.JustDown(this.numbers.FIVE)) this.selectBlock(4);
         
         this.checkWaterDamage();
+        
+        // Update other players' positions smoothly
+        this.otherPlayers.forEach(playerData => {
+            const { sprite, nameText, targetX, targetY } = playerData;
+            
+            // Smooth movement interpolation
+            const lerpFactor = 0.1;
+            sprite.x = Phaser.Math.Linear(sprite.x, targetX, lerpFactor);
+            sprite.y = Phaser.Math.Linear(sprite.y, targetY, lerpFactor);
+            
+            // Update name position
+            nameText.x = sprite.x;
+            nameText.y = sprite.y - 40;
+        });
     }
     
     selectBlock(index) {
