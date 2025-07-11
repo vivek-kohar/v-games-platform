@@ -98,10 +98,13 @@ export async function GET(
     })
 
     if (!game) {
-      return NextResponse.json(
-        { error: "Game not found" },
-        { status: 404 }
-      )
+      // Return success with null data for first-time players
+      return NextResponse.json({
+        data: null,
+        score: 0,
+        level: 1,
+        message: "No saved game state found - starting new game"
+      })
     }
 
     const gameState = await prisma.gameState.findUnique({
@@ -118,7 +121,7 @@ export async function GET(
         data: null,
         score: 0,
         level: 1,
-        message: "No saved game state found"
+        message: "No saved game state found - starting new game"
       })
     }
 
@@ -127,6 +130,7 @@ export async function GET(
       score: gameState.score,
       level: gameState.level,
       updatedAt: gameState.updatedAt,
+      message: "Game state loaded successfully"
     })
   } catch (error) {
     console.error("Load game state error:", error)

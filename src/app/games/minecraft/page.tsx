@@ -130,9 +130,31 @@ export default function MinecraftGame() {
         window.game = null
       }
       
-      // Remove game scripts
+      // Remove game scripts (thorough cleanup)
       const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
       existingGameScripts.forEach(script => script.remove())
+      
+      // Also remove any scripts that might contain MinecraftGame class
+      const allScripts = document.querySelectorAll('script')
+      allScripts.forEach(script => {
+        if (script.textContent && script.textContent.includes('class MinecraftGame')) {
+          script.remove()
+        }
+      })
+      
+      // Clear global references
+      if (typeof window !== 'undefined') {
+        try {
+          if (window.minecraftGame) {
+            window.minecraftGame = null
+          }
+          if ((window as any).MinecraftGame) {
+            delete (window as any).MinecraftGame
+          }
+        } catch (e) {
+          // Ignore errors if properties can't be deleted
+        }
+      }
     }
   }, [status, router, roomId, loadGame])
 
@@ -155,9 +177,19 @@ export default function MinecraftGame() {
       canvases.forEach(canvas => canvas.remove())
     }
     
-    // Remove existing game scripts and wait for cleanup
+    // Remove ALL existing game scripts (more thorough cleanup)
     const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
-    existingGameScripts.forEach(script => script.remove())
+    existingGameScripts.forEach(script => {
+      script.remove()
+    })
+    
+    // Also remove any scripts that might contain MinecraftGame class
+    const allScripts = document.querySelectorAll('script')
+    allScripts.forEach(script => {
+      if (script.textContent && script.textContent.includes('class MinecraftGame')) {
+        script.remove()
+      }
+    })
     
     // Clear any existing references from global scope
     if (typeof window !== 'undefined') {
@@ -168,18 +200,23 @@ export default function MinecraftGame() {
         if ((window as any).MinecraftGame) {
           delete (window as any).MinecraftGame
         }
+        // Force garbage collection hint
+        if (window.gc) {
+          window.gc()
+        }
       } catch (e) {
         // Ignore errors if properties can't be deleted
       }
     }
     
-    // Use setTimeout to ensure cleanup is complete before creating new script
+    // Use a longer timeout to ensure cleanup is complete before creating new script
     setTimeout(() => {
       // Check if Phaser is already loaded
       if (window.Phaser) {
         // Phaser already loaded, create game directly
         const gameScript = document.createElement("script")
         gameScript.setAttribute('data-minecraft-game', 'true')
+        gameScript.setAttribute('data-timestamp', Date.now().toString())
         gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
         document.head.appendChild(gameScript)
         setGameLoaded(true)
@@ -191,13 +228,14 @@ export default function MinecraftGame() {
           // Create game script
           const gameScript = document.createElement("script")
           gameScript.setAttribute('data-minecraft-game', 'true')
+          gameScript.setAttribute('data-timestamp', Date.now().toString())
           gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
           document.head.appendChild(gameScript)
           setGameLoaded(true)
         }
         document.head.appendChild(phaserScript)
       }
-    }, 100) // Small delay to ensure cleanup is complete
+    }, 300) // Increased delay to ensure cleanup is complete
   }
 
   const saveGame = async () => {
@@ -586,17 +624,27 @@ export default function MinecraftGame() {
 
 // Game code as a string to be injected
 function getMinecraftGameCode(savedState: { data: unknown; score: number } | null, selectedRoomId: string) {
+  const timestamp = Date.now()
   return `
 // Global reference for save/load
 window.minecraftGame = null;
 
-// Clear any existing MinecraftGame class
+// Clear any existing MinecraftGame class and related objects
 if (typeof window.MinecraftGame !== 'undefined') {
     delete window.MinecraftGame;
 }
 
-// Minecraft Web Game using Phaser 3
-class MinecraftGame extends Phaser.Scene {
+// Clear any existing game config
+if (typeof window.gameConfig !== 'undefined') {
+    delete window.gameConfig;
+}
+
+// Unique namespace to prevent conflicts
+(function() {
+    'use strict';
+    
+    // Minecraft Web Game using Phaser 3 - ${timestamp}
+    class MinecraftGame extends Phaser.Scene {
     constructor() {
         super({ key: 'MinecraftGame' });
         
@@ -1249,36 +1297,38 @@ class MinecraftGame extends Phaser.Scene {
     }
 }
 
-// Make the class available globally for reuse
-window.MinecraftGame = MinecraftGame;
+    // Make the class available globally for reuse
+    window.MinecraftGame = MinecraftGame;
 
-// Game configuration
-const config = {
-    type: Phaser.AUTO,
-    width: 1024,
-    height: 768,
-    parent: 'minecraft-game-container',
-    backgroundColor: '#87CEEB',
-    physics: {
-        default: 'arcade',
-        arcade: {
-            gravity: { y: 0 },
-            debug: false
-        }
-    },
-    scene: MinecraftGame
-};
+    // Game configuration
+    const config = {
+        type: Phaser.AUTO,
+        width: 1024,
+        height: 768,
+        parent: 'minecraft-game-container',
+        backgroundColor: '#87CEEB',
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: { y: 0 },
+                debug: false
+            }
+        },
+        scene: MinecraftGame
+    };
 
-// Start the game only if one doesn't already exist
-if (!window.game) {
-    window.game = new Phaser.Game(config);
-}
-
-// Disable right-click context menu
-document.addEventListener('contextmenu', function(e) {
-    if (e.target.tagName === 'CANVAS') {
-        e.preventDefault();
+    // Start the game only if one doesn't already exist
+    if (!window.game) {
+        window.game = new Phaser.Game(config);
     }
-});
+
+    // Disable right-click context menu
+    document.addEventListener('contextmenu', function(e) {
+        if (e.target.tagName === 'CANVAS') {
+            e.preventDefault();
+        }
+    });
+
+})(); // Close IIFE
 `;
 }

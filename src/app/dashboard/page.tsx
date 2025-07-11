@@ -70,17 +70,11 @@ const recentActivity = [
   { game: "Tetris", action: "Completed 15 lines", time: "3 days ago", icon: "⚡" }
 ]
 
-const quickActions = [
-  { title: "Continue Playing", subtitle: "Resume Minecraft", icon: Play, color: "text-green-600 bg-green-100" },
-  { title: "View Achievements", subtitle: "7 unlocked", icon: Trophy, color: "text-yellow-600 bg-yellow-100" },
-  { title: "Friend Activity", subtitle: "3 friends online", icon: Users, color: "text-blue-600 bg-blue-100" },
-  { title: "Weekly Challenge", subtitle: "2 days left", icon: Target, color: "text-purple-600 bg-purple-100" }
-]
-
 export default function Dashboard() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const [currentTime, setCurrentTime] = useState("")
+  const [savedGameState, setSavedGameState] = useState<{ score: number; level: number; updatedAt?: string } | null>(null)
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -101,6 +95,64 @@ export default function Dashboard() {
     const interval = setInterval(updateTime, 1000)
     return () => clearInterval(interval)
   }, [])
+
+  // Fetch saved game state
+  useEffect(() => {
+    const fetchSavedGame = async () => {
+      if (status === "authenticated") {
+        try {
+          const response = await fetch("/api/games/minecraft/save")
+          if (response.ok) {
+            const gameState = await response.json()
+            if (gameState.data) {
+              setSavedGameState({
+                score: gameState.score || 0,
+                level: gameState.level || 1,
+                updatedAt: gameState.updatedAt
+              })
+            }
+          }
+        } catch (error) {
+          console.error("Failed to fetch saved game:", error)
+        }
+      }
+    }
+
+    fetchSavedGame()
+  }, [status])
+
+  const quickActions = [
+    { 
+      title: "Continue Playing", 
+      subtitle: savedGameState 
+        ? `Score: ${savedGameState.score} • Level ${savedGameState.level}` 
+        : "Resume Minecraft", 
+      icon: Play, 
+      color: "text-green-600 bg-green-100",
+      href: "/games/minecraft"
+    },
+    { 
+      title: "View Achievements", 
+      subtitle: "7 unlocked", 
+      icon: Trophy, 
+      color: "text-yellow-600 bg-yellow-100",
+      href: "#achievements"
+    },
+    { 
+      title: "Friend Activity", 
+      subtitle: "3 friends online", 
+      icon: Users, 
+      color: "text-blue-600 bg-blue-100",
+      href: "#friends"
+    },
+    { 
+      title: "Weekly Challenge", 
+      subtitle: "2 days left", 
+      icon: Target, 
+      color: "text-purple-600 bg-purple-100",
+      href: "#challenges"
+    }
+  ]
 
   if (status === "loading") {
     return (
@@ -175,17 +227,29 @@ export default function Dashboard() {
           
           {/* Quick Actions */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            {quickActions.map((action, index) => (
-              <Card key={index} className="bg-white/5 backdrop-blur-sm border-white/10 hover:bg-white/10 transition-all duration-300 cursor-pointer group">
-                <CardContent className="p-4 text-center">
-                  <div className={`w-12 h-12 rounded-full ${action.color} mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform duration-200`}>
-                    <action.icon className="h-6 w-6" />
-                  </div>
-                  <div className="text-sm font-semibold text-white mb-1">{action.title}</div>
-                  <div className="text-xs text-gray-400">{action.subtitle}</div>
-                </CardContent>
-              </Card>
-            ))}
+            {quickActions.map((action, index) => {
+              const content = (
+                <Card className="bg-white/5 backdrop-blur-sm border-white/10 hover:bg-white/10 transition-all duration-300 cursor-pointer group">
+                  <CardContent className="p-4 text-center">
+                    <div className={`w-12 h-12 rounded-full ${action.color} mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform duration-200`}>
+                      <action.icon className="h-6 w-6" />
+                    </div>
+                    <div className="text-sm font-semibold text-white mb-1">{action.title}</div>
+                    <div className="text-xs text-gray-400">{action.subtitle}</div>
+                  </CardContent>
+                </Card>
+              )
+              
+              return action.href?.startsWith('/') ? (
+                <Link key={index} href={action.href}>
+                  {content}
+                </Link>
+              ) : (
+                <div key={index} onClick={() => action.href && (window.location.hash = action.href)}>
+                  {content}
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -200,11 +264,20 @@ export default function Dashboard() {
               </div>
               <h3 className="text-2xl font-bold text-white mb-2">Minecraft Web</h3>
               <p className="text-gray-300 mb-4">Build, explore, and survive with friends in real-time multiplayer!</p>
+              {savedGameState && (
+                <div className="mb-3 p-3 bg-green-500/20 rounded-lg border border-green-500/30">
+                  <div className="text-sm text-green-400 font-medium">Your Progress:</div>
+                  <div className="text-white">Score: {savedGameState.score} • Level {savedGameState.level}</div>
+                  {savedGameState.updatedAt && (
+                    <div className="text-xs text-gray-400">Last saved: {new Date(savedGameState.updatedAt).toLocaleString()}</div>
+                  )}
+                </div>
+              )}
               <div className="flex items-center space-x-4">
                 <Link href="/games/minecraft">
                   <Button className="bg-green-600 hover:bg-green-700 text-white px-6">
                     <Play className="h-4 w-4 mr-2" />
-                    Play Now
+                    {savedGameState ? "Continue Game" : "Play Now"}
                   </Button>
                 </Link>
                 <div className="flex items-center space-x-4 text-sm text-gray-400">
@@ -214,7 +287,9 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center space-x-1">
                     <Clock className="h-4 w-4" />
-                    <span>Last played 2h ago</span>
+                    <span>{savedGameState?.updatedAt ? 
+                      `Last played ${new Date(savedGameState.updatedAt).toLocaleDateString()}` : 
+                      "Last played 2h ago"}</span>
                   </div>
                 </div>
               </div>
