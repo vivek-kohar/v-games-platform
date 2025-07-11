@@ -16,7 +16,6 @@ import {
   Star, 
   Users, 
   TrendingUp,
-  Zap,
   Award,
   Target,
   Calendar,
@@ -82,7 +81,6 @@ export default function Dashboard() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const [currentTime, setCurrentTime] = useState("")
-  const [selectedGame, setSelectedGame] = useState(null)
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -231,7 +229,7 @@ export default function Dashboard() {
             Your Games
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {games.map((game, index) => (
+            {games.map((game) => (
               <Card key={game.id} className="bg-white/5 backdrop-blur-sm border-white/10 hover:bg-white/10 transition-all duration-300 cursor-pointer group overflow-hidden">
                 <div className={`h-2 bg-gradient-to-r ${game.gradient}`}></div>
                 <CardHeader className="pb-3">

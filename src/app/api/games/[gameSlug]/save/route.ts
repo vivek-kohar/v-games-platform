@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth"
+import { getServerSession } from "next-auth/next"
 import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
+import type { Session } from "next-auth"
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { gameSlug: string } }
+  { params }: { params: Promise<{ gameSlug: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions) as Session | null
     
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -18,7 +19,7 @@ export async function POST(
     }
 
     const { data, score, level } = await req.json()
-    const { gameSlug } = params
+    const { gameSlug } = await params
 
     // Find or create game
     let game = await prisma.game.findUnique({
@@ -78,10 +79,10 @@ export async function POST(
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { gameSlug: string } }
+  { params }: { params: Promise<{ gameSlug: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await getServerSession(authOptions) as Session | null
     
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -90,7 +91,7 @@ export async function GET(
       )
     }
 
-    const { gameSlug } = params
+    const { gameSlug } = await params
 
     const game = await prisma.game.findUnique({
       where: { slug: gameSlug }

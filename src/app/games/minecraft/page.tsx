@@ -2,18 +2,23 @@
 
 import { useSession } from "next-auth/react"
 import { useRouter } from "next/navigation"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, Save, Upload, Settings, Users, Eye, EyeOff, Maximize, Minimize } from "lucide-react"
+import { ArrowLeft, Save, Settings, Users, Eye, EyeOff } from "lucide-react"
 import Link from "next/link"
 
 // Extend Window interface for TypeScript
 declare global {
   interface Window {
-    minecraftGame: any;
+    minecraftGame: {
+      getGameState: () => { world: unknown; score: number; health: number; selectedBlock: string };
+      cleanup: () => void;
+    } | null;
     currentUserId: string;
-    game: any;
-    Phaser: any;
+    game: {
+      destroy: (removeCanvas?: boolean) => void;
+    } | null;
+    Phaser: unknown;
   }
 }
 
@@ -82,7 +87,26 @@ export default function MinecraftGame() {
   const [showRoomSelector, setShowRoomSelector] = useState(true)
   const [showInstructions, setShowInstructions] = useState(true)
   const [showGameUI, setShowGameUI] = useState(true)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const loadGame = useCallback(async () => {
+    try {
+      // Load saved game state
+      const response = await fetch("/api/games/minecraft/save")
+      if (response.ok) {
+        const savedState = await response.json()
+        console.log("Loaded game state:", savedState)
+        
+        // Initialize the game with saved state and room ID
+        initializeMinecraftGame(savedState, roomId)
+      } else {
+        // Initialize new game
+        initializeMinecraftGame(null, roomId)
+      }
+    } catch (error) {
+      console.error("Error loading game:", error)
+      initializeMinecraftGame(null, roomId)
+    }
+  }, [roomId])
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -110,37 +134,13 @@ export default function MinecraftGame() {
       const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
       existingGameScripts.forEach(script => script.remove())
     }
-  }, [status, router])
+  }, [status, router, roomId, loadGame])
 
-  const loadGame = async () => {
-    try {
-      // Load saved game state
-      const response = await fetch("/api/games/minecraft/save")
-      if (response.ok) {
-        const savedState = await response.json()
-        console.log("Loaded game state:", savedState)
-        
-        // Initialize the game with saved state and room ID
-        initializeMinecraftGame(savedState, roomId)
-      } else {
-        // Initialize new game
-        initializeMinecraftGame(null, roomId)
-      }
-    } catch (error) {
-      console.error("Error loading game:", error)
-      initializeMinecraftGame(null, roomId)
-    }
-  }
-
-  const initializeMinecraftGame = (savedState: any, selectedRoomId: string) => {
+  const initializeMinecraftGame = (savedState: { data: unknown; score: number } | null, selectedRoomId: string) => {
     // Clean up any existing game instances and scripts
     if (window.minecraftGame && typeof window.minecraftGame.cleanup === 'function') {
       window.minecraftGame.cleanup()
     }
-    
-    // Remove existing game scripts
-    const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
-    existingGameScripts.forEach(script => script.remove())
     
     // Destroy existing Phaser game instance
     if (window.game && typeof window.game.destroy === 'function') {
@@ -155,28 +155,49 @@ export default function MinecraftGame() {
       canvases.forEach(canvas => canvas.remove())
     }
     
-    // Check if Phaser is already loaded
-    if (window.Phaser) {
-      // Phaser already loaded, create game directly
-      const gameScript = document.createElement("script")
-      gameScript.setAttribute('data-minecraft-game', 'true')
-      gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
-      document.head.appendChild(gameScript)
-      setGameLoaded(true)
-    } else {
-      // Load Phaser first
-      const phaserScript = document.createElement("script")
-      phaserScript.src = "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"
-      phaserScript.onload = () => {
-        // Create game script
+    // Remove existing game scripts and wait for cleanup
+    const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
+    existingGameScripts.forEach(script => script.remove())
+    
+    // Clear any existing references from global scope
+    if (typeof window !== 'undefined') {
+      try {
+        if (window.minecraftGame) {
+          window.minecraftGame = null
+        }
+        if ((window as any).MinecraftGame) {
+          delete (window as any).MinecraftGame
+        }
+      } catch (e) {
+        // Ignore errors if properties can't be deleted
+      }
+    }
+    
+    // Use setTimeout to ensure cleanup is complete before creating new script
+    setTimeout(() => {
+      // Check if Phaser is already loaded
+      if (window.Phaser) {
+        // Phaser already loaded, create game directly
         const gameScript = document.createElement("script")
         gameScript.setAttribute('data-minecraft-game', 'true')
         gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
         document.head.appendChild(gameScript)
         setGameLoaded(true)
+      } else {
+        // Load Phaser first
+        const phaserScript = document.createElement("script")
+        phaserScript.src = "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"
+        phaserScript.onload = () => {
+          // Create game script
+          const gameScript = document.createElement("script")
+          gameScript.setAttribute('data-minecraft-game', 'true')
+          gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
+          document.head.appendChild(gameScript)
+          setGameLoaded(true)
+        }
+        document.head.appendChild(phaserScript)
       }
-      document.head.appendChild(phaserScript)
-    }
+    }, 100) // Small delay to ensure cleanup is complete
   }
 
   const saveGame = async () => {
@@ -233,7 +254,7 @@ export default function MinecraftGame() {
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: customStyles }} />
-      <div className={`min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 transition-all duration-300 ${isFullscreen ? 'overflow-hidden' : ''}`}>
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-blue-900 to-purple-900 transition-all duration-300">
       {/* Room Selection Modal */}
       {showRoomSelector && (
         <div className="fixed inset-0 bg-black bg-opacity-60 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-300">
@@ -265,7 +286,7 @@ export default function MinecraftGame() {
                   </div>
                   <div className="flex items-start">
                     <span className="text-blue-400 mr-2">•</span>
-                    <span>Leave as 'default' to join the public room</span>
+                    <span>Leave as &apos;default&apos; to join the public room</span>
                   </div>
                 </div>
               </div>
@@ -353,9 +374,11 @@ export default function MinecraftGame() {
       {/* Game Container */}
       <div className="relative">
         {/* Set current user ID for multiplayer */}
-        <script dangerouslySetInnerHTML={{
-          __html: `window.currentUserId = "${session.user.id}";`
-        }} />
+        {session?.user && (
+          <script dangerouslySetInnerHTML={{
+            __html: `window.currentUserId = "${session.user.email || 'anonymous'}";`
+          }} />
+        )}
         
         <div id="minecraft-game-container" className="flex justify-center items-center min-h-screen">
           {!gameLoaded && (
@@ -562,10 +585,15 @@ export default function MinecraftGame() {
 }
 
 // Game code as a string to be injected
-function getMinecraftGameCode(savedState: any, selectedRoomId: string) {
+function getMinecraftGameCode(savedState: { data: unknown; score: number } | null, selectedRoomId: string) {
   return `
 // Global reference for save/load
 window.minecraftGame = null;
+
+// Clear any existing MinecraftGame class
+if (typeof window.MinecraftGame !== 'undefined') {
+    delete window.MinecraftGame;
+}
 
 // Minecraft Web Game using Phaser 3
 class MinecraftGame extends Phaser.Scene {
@@ -1221,6 +1249,9 @@ class MinecraftGame extends Phaser.Scene {
     }
 }
 
+// Make the class available globally for reuse
+window.MinecraftGame = MinecraftGame;
+
 // Game configuration
 const config = {
     type: Phaser.AUTO,
@@ -1238,8 +1269,10 @@ const config = {
     scene: MinecraftGame
 };
 
-// Start the game
-window.game = new Phaser.Game(config);
+// Start the game only if one doesn't already exist
+if (!window.game) {
+    window.game = new Phaser.Game(config);
+}
 
 // Disable right-click context menu
 document.addEventListener('contextmenu', function(e) {

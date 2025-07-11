@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth"
+import { getServerSession } from "next-auth/next"
 import { authOptions } from "@/lib/auth"
+import type { Session } from "next-auth"
 
 // In-memory storage for game rooms (in production, use Redis or similar)
 const gameRooms = new Map<string, {
@@ -11,12 +12,12 @@ const gameRooms = new Map<string, {
     y: number
     lastUpdate: number
   }>
-  world: any[][]
+  world: (string | null)[][]
   lastWorldUpdate: number
 }>()
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions)
+  const session = await getServerSession(authOptions) as Session | null
   
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
+  const session = await getServerSession(authOptions) as Session | null
   
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
