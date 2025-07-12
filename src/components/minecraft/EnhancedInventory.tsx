@@ -161,6 +161,7 @@ export default function EnhancedInventory({
               <div>Blocks: 1-8 keys</div>
               <div>Weapons: Q,W,E,R keys</div>
               <div>Armor: Z,X,C,V keys</div>
+              <div className="text-red-400 mt-1">Click mobs to attack!</div>
             </div>
           </div>
         </div>

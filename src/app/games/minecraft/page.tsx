@@ -548,6 +548,14 @@ export default function MinecraftGame() {
                 <div className="text-xs text-blue-300" id="armor-protection">DEF: 0</div>
               </div>
               
+              <div className="flex items-center space-x-2">
+                <div className="text-red-500">👹</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-400">Mobs</div>
+                  <span id="mob-count-display" className="text-sm font-medium text-red-500">0</span>
+                </div>
+              </div>
+              
               <div className="border-t border-gray-600 pt-3 mt-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
