@@ -62,7 +62,7 @@ export default function EnhancedInventory({
   ]
 
   return (
-    <div className="fixed top-32 left-4 z-50">
+    <div className="fixed top-20 right-4 z-50">
       <div className="bg-gradient-to-t from-gray-900/95 to-gray-800/95 backdrop-blur-lg rounded-xl p-4 border-2 border-gray-600 shadow-2xl max-w-xs">
         
         {/* Building Blocks */}

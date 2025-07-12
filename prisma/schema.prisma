@@ -47,10 +47,11 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts    Account[]
-  sessions    Session[]
-  gameStates  GameState[]
+  accounts     Account[]
+  sessions     Session[]
+  gameStates   GameState[]
   achievements Achievement[]
+  playerBank   PlayerBank?
 }
 
 model VerificationToken {
@@ -102,4 +103,34 @@ model Achievement {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, gameSlug, name])
+}
+
+model PlayerBank {
+  id         String     @id @default(cuid())
+  userId     String     @unique
+  totalValue Int        @default(0)
+  items      BankItem[]
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BankItem {
+  id          String   @id @default(cuid())
+  bankId      String
+  itemId      String
+  itemType    String
+  itemName    String
+  quantity    Int
+  value       Int
+  rarity      String
+  icon        String
+  description String
+  lastUpdated DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  bank PlayerBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+
+  @@unique([bankId, itemId, itemType])
 }

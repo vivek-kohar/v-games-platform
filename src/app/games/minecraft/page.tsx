@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { ArrowLeft, Save, Settings, Users, Eye, EyeOff } from "lucide-react"
 import Link from "next/link"
 import EnhancedInventory from "@/components/minecraft/EnhancedInventory"
+import { PlayerBank } from "@/components/minecraft/PlayerBank"
 import { getEnhancedMinecraftGameCode } from "@/components/minecraft/EnhancedGameScript"
 
 // Extend Window interface for TypeScript
@@ -25,6 +26,9 @@ declare global {
       setSelectedBlock: (blockType: string) => void;
       setSelectedWeapon: (weaponType: string) => void;
       setSelectedArmor: (armorType: string) => void;
+      getPlayerInventory: () => any[];
+      addToInventory: (item: any) => boolean;
+      removeFromInventory: (itemId: string, quantity: number) => boolean;
     } | null;
     currentUserId: string;
     game: {
@@ -102,6 +106,9 @@ export default function MinecraftGame() {
   const [selectedBlock, setSelectedBlock] = useState("grass")
   const [selectedWeapon, setSelectedWeapon] = useState("none")
   const [selectedArmor, setSelectedArmor] = useState("none")
+  const [showBank, setShowBank] = useState(false)
+  const [bankItems, setBankItems] = useState<any[]>([])
+  const [playerInventory, setPlayerInventory] = useState<any[]>([])
 
   const handleBlockSelect = (blockId: string) => {
     setSelectedBlock(blockId)
@@ -132,6 +139,102 @@ export default function MinecraftGame() {
       console.log('Armor updated in game')
     } else {
       console.log('Game not ready for armor update')
+    }
+  }
+
+  // Bank system functions
+  const loadBankData = useCallback(async () => {
+    try {
+      const userId = session?.user?.email || 'guest-' + Math.random().toString(36).substr(2, 9)
+      const response = await fetch('/api/games/minecraft/bank?guestId=' + encodeURIComponent(userId))
+      
+      if (response.ok) {
+        const data = await response.json()
+        setBankItems(data.bankItems || [])
+      }
+    } catch (error) {
+      console.error('Failed to load bank data:', error)
+    }
+  }, [session])
+
+  const loadPlayerInventory = useCallback(() => {
+    if (window.minecraftGame && typeof window.minecraftGame.getPlayerInventory === 'function') {
+      const inventory = window.minecraftGame.getPlayerInventory()
+      setPlayerInventory(inventory || [])
+    }
+  }, [])
+
+  const handleDepositItem = async (item: any) => {
+    try {
+      const userId = session?.user?.email || 'guest-' + Math.random().toString(36).substr(2, 9)
+      const response = await fetch('/api/games/minecraft/bank', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'deposit',
+          item,
+          quantity: item.quantity,
+          guestId: userId
+        })
+      })
+
+      if (response.ok) {
+        // Remove from game inventory
+        if (window.minecraftGame && typeof window.minecraftGame.removeFromInventory === 'function') {
+          window.minecraftGame.removeFromInventory(item.id, item.quantity)
+        }
+        
+        // Refresh both inventories
+        await loadBankData()
+        loadPlayerInventory()
+      }
+    } catch (error) {
+      console.error('Failed to deposit item:', error)
+    }
+  }
+
+  const handleWithdrawItem = async (itemId: string, quantity: number) => {
+    try {
+      const userId = session?.user?.email || 'guest-' + Math.random().toString(36).substr(2, 9)
+      const bankItem = bankItems.find((item: any) => item.itemId === itemId)
+      
+      if (!bankItem) return
+
+      const response = await fetch('/api/games/minecraft/bank', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'withdraw',
+          item: { id: itemId },
+          quantity,
+          guestId: userId
+        })
+      })
+
+      if (response.ok) {
+        // Add to game inventory
+        if (window.minecraftGame && typeof window.minecraftGame.addToInventory === 'function') {
+          const itemToAdd = {
+            id: bankItem.itemId,
+            name: bankItem.itemName,
+            type: bankItem.itemType,
+            quantity,
+            icon: bankItem.icon,
+            rarity: bankItem.rarity,
+            description: bankItem.description,
+            value: bankItem.value
+          }
+          
+          const success = window.minecraftGame.addToInventory(itemToAdd)
+          if (success) {
+            // Refresh both inventories
+            await loadBankData()
+            loadPlayerInventory()
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to withdraw item:', error)
     }
   }
 
@@ -167,12 +270,23 @@ export default function MinecraftGame() {
     // Load game regardless of authentication status
     loadGame()
     
+    // Load bank data
+    loadBankData()
+    
+    // Set up periodic inventory refresh
+    const inventoryInterval = setInterval(() => {
+      loadPlayerInventory()
+    }, 2000) // Refresh every 2 seconds
+    
     // Listen for game initialization to sync state
     const handleGameInitialized = (event: CustomEvent) => {
       const { selectedBlock, selectedWeapon, selectedArmor } = event.detail
       setSelectedBlock(selectedBlock)
       setSelectedWeapon(selectedWeapon)
       setSelectedArmor(selectedArmor)
+      
+      // Load initial inventory
+      setTimeout(() => loadPlayerInventory(), 1000)
     }
     
     window.addEventListener('gameInitialized', handleGameInitialized as EventListener)
@@ -180,6 +294,7 @@ export default function MinecraftGame() {
     // Cleanup function to prevent memory leaks and stop API calls
     return () => {
       window.removeEventListener('gameInitialized', handleGameInitialized as EventListener)
+      clearInterval(inventoryInterval)
       
       if (window.minecraftGame && typeof window.minecraftGame.cleanup === 'function') {
         window.minecraftGame.cleanup()
@@ -217,7 +332,7 @@ export default function MinecraftGame() {
         }
       }
     }
-  }, [status, router, roomId, loadGame])
+  }, [status, router, roomId, loadGame, loadBankData, loadPlayerInventory])
 
   const initializeMinecraftGame = (savedState: { data: unknown; score: number } | null, selectedRoomId: string) => {
     // Clean up any existing game instances and scripts
@@ -456,6 +571,17 @@ export default function MinecraftGame() {
                 {showGameUI ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
               </Button>
               <Button
+                onClick={() => {
+                  loadPlayerInventory()
+                  setShowBank(true)
+                }}
+                variant="ghost"
+                size="sm"
+                className="text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10"
+              >
+                🏦 Bank
+              </Button>
+              <Button
                 onClick={() => setShowInstructions(!showInstructions)}
                 variant="ghost"
                 size="sm"
@@ -629,6 +755,16 @@ export default function MinecraftGame() {
           onBlockSelect={handleBlockSelect}
           onWeaponSelect={handleWeaponSelect}
           onArmorSelect={handleArmorSelect}
+        />
+
+        {/* Player Bank */}
+        <PlayerBank
+          isOpen={showBank}
+          onClose={() => setShowBank(false)}
+          onDepositItem={handleDepositItem}
+          onWithdrawItem={handleWithdrawItem}
+          bankItems={bankItems}
+          playerInventory={playerInventory}
         />
       </div>
     </div>

@@ -50,6 +50,27 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.playerInvulnerable = false;
     this.invulnerabilityTime = 1000; // 1 second invulnerability after taking damage
     
+    // Resource and inventory system
+    this.playerInventory = [];
+    this.resourceNodes = [];
+    this.maxInventorySize = 50;
+    this.resourceSpawnTimer = 0;
+    this.resourceSpawnInterval = 10000; // Spawn resources every 10 seconds
+    this.maxResourceNodes = 20;
+    
+    // Resource depletion system
+    this.blockDurability = new Map(); // Track how much each block has been mined
+    this.resourceRarity = {
+      grass: { rarity: 'common', value: 1, durability: 1 },
+      dirt: { rarity: 'common', value: 1, durability: 1 },
+      stone: { rarity: 'common', value: 2, durability: 3 },
+      wood: { rarity: 'common', value: 3, durability: 2 },
+      water: { rarity: 'common', value: 1, durability: 1 },
+      iron: { rarity: 'rare', value: 10, durability: 5 },
+      gold: { rarity: 'epic', value: 25, durability: 8 },
+      diamond: { rarity: 'legendary', value: 50, durability: 12 }
+    };
+    
     // Multiplayer
     this.roomId = '${roomId}';
     this.otherPlayers = new Map();
@@ -489,12 +510,34 @@ if (window.game && typeof window.game.destroy === 'function') {
     if (pointer.button === 0) { // Left click
       // Check if there's a block to attack/break
       if (this.world[gridX][gridY]) {
-        // Use weapon to break blocks faster
-        const breakPower = this.damage;
-        action = 'remove';
-        blockType = null;
-        this.applyWorldChange(gridX, gridY, null);
-        this.score += (5 * breakPower); // More score with better weapons
+        const blockType = this.world[gridX][gridY].blockType;
+        const blockKey = gridX + '-' + gridY;
+        
+        // Get current durability or set initial
+        let currentDurability = this.blockDurability.get(blockKey) || this.resourceRarity[blockType]?.durability || 1;
+        
+        // Apply weapon damage to durability
+        currentDurability -= this.damage;
+        
+        if (currentDurability <= 0) {
+          // Block is fully mined - collect resource
+          this.collectResource(blockType, gridX, gridY);
+          
+          // Remove block
+          action = 'remove';
+          blockType = null;
+          this.applyWorldChange(gridX, gridY, null);
+          this.blockDurability.delete(blockKey);
+          
+          // Show mining effect
+          this.showMiningEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, blockType);
+        } else {
+          // Block still has durability - update it
+          this.blockDurability.set(blockKey, currentDurability);
+          
+          // Show damage effect
+          this.showBlockDamageEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, currentDurability);
+        }
         
         // Show weapon effect
         this.showWeaponEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE);
@@ -650,6 +693,10 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.updateMobAI();
     this.updateCombat();
     this.cleanupDeadMobs();
+    
+    // Resource system updates
+    this.updateResourceSpawning();
+    this.updateResourceNodes();
   }
   
   checkEnvironmentalEffects() {
@@ -1182,6 +1229,261 @@ if (window.game && typeof window.game.destroy === 'function') {
         onComplete: () => particle.destroy()
       });
     }
+  }
+  
+  // Resource Management System
+  updateResourceSpawning() {
+    const currentTime = this.time.now;
+    
+    if (currentTime - this.resourceSpawnTimer > this.resourceSpawnInterval && 
+        this.resourceNodes.length < this.maxResourceNodes) {
+      this.spawnResourceNode();
+      this.resourceSpawnTimer = currentTime;
+    }
+  }
+  
+  spawnResourceNode() {
+    // Choose rare resource types for special nodes
+    const rareResources = ['iron', 'gold', 'diamond'];
+    const resourceType = rareResources[Math.floor(Math.random() * rareResources.length)];
+    
+    // Find empty spot
+    let spawnX, spawnY;
+    let attempts = 0;
+    do {
+      spawnX = Math.floor(Math.random() * this.WORLD_WIDTH);
+      spawnY = Math.floor(Math.random() * this.WORLD_HEIGHT);
+      attempts++;
+    } while (this.world[spawnX][spawnY] && attempts < 20);
+    
+    if (attempts < 20) {
+      // Create resource node
+      this.applyWorldChange(spawnX, spawnY, resourceType);
+      
+      // Add to resource nodes list
+      this.resourceNodes.push({
+        x: spawnX,
+        y: spawnY,
+        type: resourceType,
+        spawnTime: this.time.now,
+        isRich: true // Rich nodes give more resources
+      });
+      
+      // Visual effect for new resource
+      this.showResourceSpawnEffect(spawnX * this.BLOCK_SIZE, spawnY * this.BLOCK_SIZE, resourceType);
+    }
+  }
+  
+  updateResourceNodes() {
+    // Remove old resource nodes after 2 minutes
+    const currentTime = this.time.now;
+    this.resourceNodes = this.resourceNodes.filter(node => {
+      if (currentTime - node.spawnTime > 120000) { // 2 minutes
+        // Remove the block if it still exists
+        if (this.world[node.x][node.y]) {
+          this.applyWorldChange(node.x, node.y, null);
+        }
+        return false;
+      }
+      return true;
+    });
+  }
+  
+  collectResource(blockType, gridX, gridY) {
+    const resourceData = this.resourceRarity[blockType];
+    if (!resourceData) return;
+    
+    // Check if this is a rich resource node
+    const isRichNode = this.resourceNodes.some(node => 
+      node.x === gridX && node.y === gridY && node.isRich
+    );
+    
+    // Calculate quantity based on weapon and node type
+    let quantity = 1;
+    if (this.selectedWeapon === 'axe' && blockType === 'wood') quantity += 1;
+    if (this.selectedWeapon === 'sword' && ['iron', 'gold', 'diamond'].includes(blockType)) quantity += 1;
+    if (isRichNode) quantity *= 2;
+    
+    // Create resource item
+    const resourceItem = {
+      id: blockType + '-' + Date.now(),
+      name: blockType.charAt(0).toUpperCase() + blockType.slice(1),
+      type: 'resource',
+      quantity: quantity,
+      icon: this.blockTypes[blockType]?.emoji || '🧱',
+      rarity: resourceData.rarity,
+      description: 'Mined ' + blockType + ' resource',
+      value: resourceData.value
+    };
+    
+    // Add to inventory if space available
+    if (this.playerInventory.length < this.maxInventorySize) {
+      // Check if item already exists in inventory
+      const existingItem = this.playerInventory.find(item => 
+        item.name === resourceItem.name && item.type === resourceItem.type
+      );
+      
+      if (existingItem) {
+        existingItem.quantity += quantity;
+      } else {
+        this.playerInventory.push(resourceItem);
+      }
+      
+      // Update score
+      this.score += resourceData.value * quantity;
+      
+      // Show collection effect
+      this.showResourceCollectionEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, resourceItem);
+      
+      // Remove from resource nodes if it was one
+      this.resourceNodes = this.resourceNodes.filter(node => 
+        !(node.x === gridX && node.y === gridY)
+      );
+      
+    } else {
+      // Inventory full - show warning
+      this.showInventoryFullWarning();
+    }
+    
+    this.updateUI();
+  }
+  
+  showMiningEffect(x, y, blockType) {
+    // Create mining particles
+    for (let i = 0; i < 8; i++) {
+      const particle = this.add.circle(
+        x + this.BLOCK_SIZE/2, 
+        y + this.BLOCK_SIZE/2, 
+        3, 
+        this.blockTypes[blockType]?.color || 0x666666
+      );
+      
+      const angle = (i / 8) * Math.PI * 2;
+      const speed = 30 + Math.random() * 20;
+      
+      this.tweens.add({
+        targets: particle,
+        x: x + this.BLOCK_SIZE/2 + Math.cos(angle) * speed,
+        y: y + this.BLOCK_SIZE/2 + Math.sin(angle) * speed,
+        alpha: 0,
+        scaleX: 0.1,
+        scaleY: 0.1,
+        duration: 600,
+        onComplete: () => particle.destroy()
+      });
+    }
+  }
+  
+  showBlockDamageEffect(x, y, remainingDurability) {
+    // Show cracks or damage on block
+    const damageOverlay = this.add.rectangle(
+      x + this.BLOCK_SIZE/2, 
+      y + this.BLOCK_SIZE/2, 
+      this.BLOCK_SIZE, 
+      this.BLOCK_SIZE, 
+      0x000000, 
+      0.1 + (0.3 * (1 - remainingDurability / 10))
+    );
+    
+    // Remove overlay after short time
+    this.time.delayedCall(200, () => {
+      if (damageOverlay && damageOverlay.active) {
+        damageOverlay.destroy();
+      }
+    });
+  }
+  
+  showResourceSpawnEffect(x, y, resourceType) {
+    const sparkle = this.add.circle(x + this.BLOCK_SIZE/2, y + this.BLOCK_SIZE/2, 20, 0xFFD700, 0.8);
+    
+    this.tweens.add({
+      targets: sparkle,
+      scaleX: 2,
+      scaleY: 2,
+      alpha: 0,
+      duration: 1000,
+      onComplete: () => sparkle.destroy()
+    });
+  }
+  
+  showResourceCollectionEffect(x, y, item) {
+    // Show floating text with item info
+    const text = this.add.text(
+      x + this.BLOCK_SIZE/2, 
+      y, 
+      '+' + item.quantity + ' ' + item.name, 
+      { 
+        fontSize: '12px', 
+        fill: item.rarity === 'legendary' ? '#FFD700' : 
+              item.rarity === 'epic' ? '#9D4EDD' :
+              item.rarity === 'rare' ? '#00D4FF' : '#FFFFFF'
+      }
+    );
+    
+    text.setOrigin(0.5);
+    
+    this.tweens.add({
+      targets: text,
+      y: y - 30,
+      alpha: 0,
+      duration: 1500,
+      onComplete: () => text.destroy()
+    });
+  }
+  
+  showInventoryFullWarning() {
+    const warning = this.add.text(
+      this.cameras.main.centerX,
+      this.cameras.main.centerY - 100,
+      'Inventory Full!',
+      { fontSize: '24px', fill: '#FF0000' }
+    );
+    
+    warning.setOrigin(0.5);
+    
+    this.tweens.add({
+      targets: warning,
+      alpha: 0,
+      duration: 2000,
+      onComplete: () => warning.destroy()
+    });
+  }
+  
+  getPlayerInventory() {
+    return this.playerInventory;
+  }
+  
+  addToInventory(item) {
+    if (this.playerInventory.length >= this.maxInventorySize) {
+      return false; // Inventory full
+    }
+    
+    // Check if item already exists
+    const existingItem = this.playerInventory.find(invItem => 
+      invItem.name === item.name && invItem.type === item.type
+    );
+    
+    if (existingItem) {
+      existingItem.quantity += item.quantity;
+    } else {
+      this.playerInventory.push(item);
+    }
+    
+    return true;
+  }
+  
+  removeFromInventory(itemId, quantity) {
+    const itemIndex = this.playerInventory.findIndex(item => item.id === itemId);
+    if (itemIndex === -1) return false;
+    
+    const item = this.playerInventory[itemIndex];
+    if (item.quantity <= quantity) {
+      this.playerInventory.splice(itemIndex, 1);
+    } else {
+      item.quantity -= quantity;
+    }
+    
+    return true;
   }
 }
 
