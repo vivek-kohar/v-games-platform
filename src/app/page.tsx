@@ -38,7 +38,7 @@ export default function Home() {
       <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-128 h-128 bg-gradient-to-r from-cyan-500/10 to-purple-500/10 rounded-full filter blur-3xl"></div>
 
       {/* Hero Section */}
-      <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-12">
         <div className="text-center mb-20">
           {/* Hero Badge */}
           <div className="inline-flex items-center glass rounded-full px-6 py-3 mb-8">
@@ -54,23 +54,29 @@ export default function Home() {
             <span className="text-white">Platform</span>
           </h1>
           
-          <p className="text-xl md:text-2xl text-gray-300 mb-12 max-w-4xl mx-auto leading-relaxed">
+          <p className="text-xl md:text-2xl text-gray-200 mb-12 max-w-4xl mx-auto leading-relaxed">
             Experience the next generation of web gaming with 
-            <span className="text-cyan-400 font-semibold"> persistent progress</span>, 
-            <span className="text-purple-400 font-semibold"> social features</span>, and 
-            <span className="text-pink-400 font-semibold"> incredible adventures</span>
+            <span className="text-cyan-300 font-semibold"> persistent progress</span>, 
+            <span className="text-purple-300 font-semibold"> social features</span>, and 
+            <span className="text-pink-300 font-semibold"> incredible adventures</span>
           </p>
 
           {/* Hero Actions */}
           <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-6">
-            <Link href="/auth/signup">
-              <Button size="lg" className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white px-8 py-4 text-lg font-semibold rounded-xl shadow-glow-lg pulse-glow">
+            <Link href="/games/minecraft">
+              <Button size="lg" className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-8 py-4 text-lg font-semibold rounded-xl shadow-glow-lg pulse-glow">
                 <Play className="h-5 w-5 mr-2" />
-                Start Playing Now
+                Try Minecraft Now
+              </Button>
+            </Link>
+            <Link href="/auth/signup">
+              <Button size="lg" className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white px-8 py-4 text-lg font-semibold rounded-xl shadow-glow-lg">
+                <Users className="h-5 w-5 mr-2" />
+                Create Account
               </Button>
             </Link>
             <Link href="#features">
-              <Button variant="outline" size="lg" className="glass border-white/20 text-white hover:bg-white/10 px-8 py-4 text-lg rounded-xl">
+              <Button variant="outline" size="lg" className="glass border-white/30 text-white hover:bg-white/20 hover:border-white/50 px-8 py-4 text-lg rounded-xl">
                 Learn More
                 <ArrowRight className="h-5 w-5 ml-2" />
               </Button>
@@ -86,10 +92,10 @@ export default function Home() {
             { label: "Achievements", value: "200+", icon: Trophy },
             { label: "Hours Played", value: "50K+", icon: Star }
           ].map((stat, index) => (
-            <div key={index} className="glass rounded-xl p-6 text-center card-hover">
-              <stat.icon className="h-8 w-8 text-cyan-400 mx-auto mb-3" />
+            <div key={index} className="glass rounded-xl p-6 text-center card-hover bg-white/5 border-white/20">
+              <stat.icon className="h-8 w-8 text-cyan-300 mx-auto mb-3" />
               <div className="text-2xl font-bold text-white mb-1">{stat.value}</div>
-              <div className="text-sm text-gray-400">{stat.label}</div>
+              <div className="text-sm text-gray-300">{stat.label}</div>
             </div>
           ))}
         </div>
@@ -101,7 +107,7 @@ export default function Home() {
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
             Why Choose <span className="text-gradient-gaming">V-Games</span>?
           </h2>
-          <p className="text-xl text-gray-300 max-w-3xl mx-auto">
+          <p className="text-xl text-gray-200 max-w-3xl mx-auto">
             Experience gaming like never before with our cutting-edge features and community
           </p>
         </div>
@@ -133,7 +139,7 @@ export default function Home() {
               gradient: "from-purple-500 to-pink-500"
             }
           ].map((feature, index) => (
-            <Card key={index} className="glass border-white/10 card-hover group">
+            <Card key={index} className="glass border-white/20 card-hover group bg-white/5">
               <CardHeader className="text-center">
                 <div className={`w-16 h-16 rounded-full bg-gradient-to-r ${feature.gradient} mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform duration-300`}>
                   <feature.icon className="h-8 w-8 text-white" />
@@ -141,7 +147,7 @@ export default function Home() {
                 <CardTitle className="text-white text-xl">{feature.title}</CardTitle>
               </CardHeader>
               <CardContent>
-                <CardDescription className="text-gray-300 text-center">
+                <CardDescription className="text-gray-200 text-center">
                   {feature.description}
                 </CardDescription>
               </CardContent>
@@ -154,7 +160,7 @@ export default function Home() {
       <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
         <div className="text-center mb-16">
           <h3 className="text-4xl font-bold text-white mb-6">Featured Games</h3>
-          <p className="text-xl text-gray-300">Jump into these amazing experiences right now</p>
+          <p className="text-xl text-gray-200">Jump into these amazing experiences right now</p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-20">
@@ -164,40 +170,45 @@ export default function Home() {
               title: "Minecraft Web",
               description: "Build, explore, and survive in a procedurally generated 2D world with blocks, terrain generation, and physics-based gameplay.",
               gradient: "from-green-500 to-emerald-600",
-              players: "2.3K"
+              players: "2.3K",
+              link: "/games/minecraft"
             },
             {
               emoji: "🐍",
               title: "Snake Game",
               description: "Classic snake game with modern graphics, power-ups, and multiplayer support. Grow your snake and dominate!",
               gradient: "from-purple-500 to-violet-600",
-              players: "1.8K"
+              players: "1.8K",
+              link: "/games/snake"
             },
             {
               emoji: "🧩",
               title: "Tetris",
               description: "The timeless puzzle game with modern visuals and challenging game modes. Clear lines and achieve high scores!",
               gradient: "from-blue-500 to-cyan-600",
-              players: "956"
+              players: "956",
+              link: "/games/tetris"
             }
           ].map((game, index) => (
-            <Card key={index} className="glass border-white/10 card-hover group overflow-hidden">
+            <Card key={index} className="glass border-white/20 card-hover group overflow-hidden bg-gray-900/50">
               <div className={`h-2 bg-gradient-to-r ${game.gradient}`}></div>
               <CardHeader className="text-center">
                 <div className="text-6xl mb-4 group-hover:animate-bounce">{game.emoji}</div>
                 <CardTitle className="text-white text-xl mb-2">{game.title}</CardTitle>
-                <div className="flex items-center justify-center space-x-2 text-sm text-gray-400">
+                <div className="flex items-center justify-center space-x-2 text-sm text-gray-300">
                   <Users className="h-4 w-4" />
                   <span>{game.players} playing</span>
                 </div>
               </CardHeader>
               <CardContent>
-                <CardDescription className="text-gray-300 text-center mb-4">
+                <CardDescription className="text-gray-200 text-center mb-4">
                   {game.description}
                 </CardDescription>
-                <Button className={`w-full bg-gradient-to-r ${game.gradient} hover:opacity-90 text-white`}>
-                  Play Now
-                </Button>
+                <Link href={game.link}>
+                  <Button className={`w-full bg-gradient-to-r ${game.gradient} hover:opacity-90 text-white font-semibold`}>
+                    Play Now - No Signup Required
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
           ))}
@@ -206,21 +217,28 @@ export default function Home() {
 
       {/* CTA Section */}
       <section className="relative z-10 max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="glass-intense rounded-3xl p-12 text-center">
+        <div className="glass-intense rounded-3xl p-12 text-center bg-gray-900/60 border-white/20">
           <h3 className="text-3xl md:text-4xl font-bold text-white mb-6">
             Ready to Start Your Gaming Adventure?
           </h3>
-          <p className="text-xl text-gray-300 mb-8">
-            Join thousands of players and discover your next favorite game today!
+          <p className="text-xl text-gray-200 mb-8">
+            Jump right into the action or create an account to save your progress!
           </p>
           <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
+            <Link href="/games/minecraft">
+              <Button size="lg" className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-8 py-4 text-lg font-semibold rounded-xl pulse-glow">
+                <Play className="h-5 w-5 mr-2" />
+                Play Minecraft Now
+              </Button>
+            </Link>
             <Link href="/auth/signup">
-              <Button size="lg" className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white px-8 py-4 text-lg font-semibold rounded-xl pulse-glow">
+              <Button size="lg" className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600 text-white px-8 py-4 text-lg font-semibold rounded-xl">
+                <Users className="h-5 w-5 mr-2" />
                 Create Free Account
               </Button>
             </Link>
             <Link href="/auth/signin">
-              <Button variant="outline" size="lg" className="glass border-white/20 text-white hover:bg-white/10 px-8 py-4 text-lg rounded-xl">
+              <Button variant="outline" size="lg" className="glass border-white/30 text-white hover:bg-white/20 hover:border-white/50 px-8 py-4 text-lg rounded-xl">
                 Sign In
               </Button>
             </Link>

@@ -21,7 +21,7 @@ export default function RootLayout({
       <body className={inter.className}>
         <SessionProvider>
           <Navigation />
-          <main className="pt-16">
+          <main>
             {children}
           </main>
         </SessionProvider>

@@ -49,8 +49,8 @@ export function Navigation() {
       <nav className={cn(
         "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
         isScrolled 
-          ? "glass border-b border-white/10 backdrop-blur-xl" 
-          : "bg-transparent"
+          ? "glass border-b border-white/20 backdrop-blur-xl bg-gray-900/80" 
+          : "bg-gray-900/60 backdrop-blur-sm"
       )}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -61,10 +61,10 @@ export function Navigation() {
                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
               </div>
               <div className="hidden sm:block">
-                <h1 className="text-xl font-bold text-white group-hover:text-gradient-gaming transition-all duration-200">
+                <h1 className="text-xl font-bold text-white group-hover:text-cyan-300 transition-all duration-200">
                   V-Games
                 </h1>
-                <div className="text-xs text-gray-400 -mt-1">Platform</div>
+                <div className="text-xs text-gray-300 -mt-1">Platform</div>
               </div>
             </Link>
 
@@ -81,8 +81,8 @@ export function Navigation() {
                       variant="ghost"
                       size="sm"
                       className={cn(
-                        "flex items-center space-x-2 text-gray-300 hover:text-white hover:bg-white/10 transition-all duration-200",
-                        isActive && "text-cyan-400 bg-cyan-400/10 hover:bg-cyan-400/20"
+                        "flex items-center space-x-2 text-gray-200 hover:text-white hover:bg-white/15 transition-all duration-200",
+                        isActive && "text-cyan-300 bg-cyan-400/15 hover:bg-cyan-400/25"
                       )}
                     >
                       <Icon className="h-4 w-4" />
@@ -101,15 +101,15 @@ export function Navigation() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="hidden sm:flex relative text-gray-300 hover:text-white hover:bg-white/10"
+                    className="hidden sm:flex relative text-gray-200 hover:text-white hover:bg-white/15"
                   >
                     <Bell className="h-4 w-4" />
                     <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
                   </Button>
                   
                   {/* User Menu */}
-                  <div className="flex items-center space-x-2 glass rounded-lg px-3 py-2">
-                    <User className="h-4 w-4 text-cyan-400" />
+                  <div className="flex items-center space-x-2 glass rounded-lg px-3 py-2 bg-white/10 border-white/20">
+                    <User className="h-4 w-4 text-cyan-300" />
                     <span className="hidden sm:inline text-sm text-white font-medium">
                       {session?.user?.name?.split(' ')[0] || 'Player'}
                     </span>
@@ -128,12 +128,12 @@ export function Navigation() {
               ) : (
                 <>
                   <Link href="/auth/signin">
-                    <Button variant="ghost" size="sm" className="text-gray-300 hover:text-white">
+                    <Button variant="ghost" size="sm" className="text-gray-200 hover:text-white hover:bg-white/15">
                       Sign In
                     </Button>
                   </Link>
                   <Link href="/auth/signup">
-                    <Button size="sm" className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 pulse-glow">
+                    <Button size="sm" className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white font-semibold pulse-glow">
                       Get Started
                     </Button>
                   </Link>
@@ -144,7 +144,7 @@ export function Navigation() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="md:hidden text-gray-300 hover:text-white"
+                className="md:hidden text-gray-200 hover:text-white hover:bg-white/15"
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               >
                 {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -155,7 +155,7 @@ export function Navigation() {
 
         {/* Mobile Menu */}
         {isMobileMenuOpen && (
-          <div className="md:hidden glass border-t border-white/10 backdrop-blur-xl">
+          <div className="md:hidden glass border-t border-white/20 backdrop-blur-xl bg-gray-900/90">
             <div className="px-4 py-4 space-y-2">
               {filteredNavItems.map((item) => {
                 const Icon = item.icon
@@ -171,8 +171,8 @@ export function Navigation() {
                     <Button
                       variant="ghost"
                       className={cn(
-                        "w-full justify-start text-gray-300 hover:text-white hover:bg-white/10",
-                        isActive && "text-cyan-400 bg-cyan-400/10"
+                        "w-full justify-start text-gray-200 hover:text-white hover:bg-white/15",
+                        isActive && "text-cyan-300 bg-cyan-400/15"
                       )}
                     >
                       <Icon className="h-4 w-4 mr-2" />
@@ -183,14 +183,14 @@ export function Navigation() {
               })}
               
               {status !== "authenticated" && (
-                <div className="pt-4 border-t border-white/10 space-y-2">
+                <div className="pt-4 border-t border-white/20 space-y-2">
                   <Link href="/auth/signin" onClick={() => setIsMobileMenuOpen(false)}>
-                    <Button variant="ghost" className="w-full text-gray-300 hover:text-white">
+                    <Button variant="ghost" className="w-full text-gray-200 hover:text-white hover:bg-white/15">
                       Sign In
                     </Button>
                   </Link>
                   <Link href="/auth/signup" onClick={() => setIsMobileMenuOpen(false)}>
-                    <Button className="w-full bg-gradient-to-r from-cyan-500 to-blue-500">
+                    <Button className="w-full bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold">
                       Get Started
                     </Button>
                   </Link>
@@ -200,9 +200,6 @@ export function Navigation() {
           </div>
         )}
       </nav>
-      
-      {/* Spacer to prevent content from being hidden behind fixed nav */}
-      <div className="h-16"></div>
     </>
   )
 } 

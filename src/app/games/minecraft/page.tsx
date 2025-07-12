@@ -6,13 +6,25 @@ import { useEffect, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { ArrowLeft, Save, Settings, Users, Eye, EyeOff } from "lucide-react"
 import Link from "next/link"
+import EnhancedInventory from "@/components/minecraft/EnhancedInventory"
+import { getEnhancedMinecraftGameCode } from "@/components/minecraft/EnhancedGameScript"
 
 // Extend Window interface for TypeScript
 declare global {
   interface Window {
     minecraftGame: {
-      getGameState: () => { world: unknown; score: number; health: number; selectedBlock: string };
+      getGameState: () => { 
+        world: unknown; 
+        score: number; 
+        health: number; 
+        selectedBlock: string;
+        selectedWeapon: string;
+        selectedArmor: string;
+      };
       cleanup: () => void;
+      setSelectedBlock: (blockType: string) => void;
+      setSelectedWeapon: (weaponType: string) => void;
+      setSelectedArmor: (armorType: string) => void;
     } | null;
     currentUserId: string;
     game: {
@@ -87,6 +99,41 @@ export default function MinecraftGame() {
   const [showRoomSelector, setShowRoomSelector] = useState(true)
   const [showInstructions, setShowInstructions] = useState(true)
   const [showGameUI, setShowGameUI] = useState(true)
+  const [selectedBlock, setSelectedBlock] = useState("grass")
+  const [selectedWeapon, setSelectedWeapon] = useState("none")
+  const [selectedArmor, setSelectedArmor] = useState("none")
+
+  const handleBlockSelect = (blockId: string) => {
+    setSelectedBlock(blockId)
+    // Update the game's selected block
+    if (window.minecraftGame && typeof window.minecraftGame.setSelectedBlock === 'function') {
+      window.minecraftGame.setSelectedBlock(blockId)
+    }
+  }
+
+  const handleWeaponSelect = (weaponId: string) => {
+    console.log('Selecting weapon:', weaponId)
+    setSelectedWeapon(weaponId)
+    // Update the game's selected weapon
+    if (window.minecraftGame && typeof window.minecraftGame.setSelectedWeapon === 'function') {
+      window.minecraftGame.setSelectedWeapon(weaponId)
+      console.log('Weapon updated in game')
+    } else {
+      console.log('Game not ready for weapon update')
+    }
+  }
+
+  const handleArmorSelect = (armorId: string) => {
+    console.log('Selecting armor:', armorId)
+    setSelectedArmor(armorId)
+    // Update the game's selected armor
+    if (window.minecraftGame && typeof window.minecraftGame.setSelectedArmor === 'function') {
+      window.minecraftGame.setSelectedArmor(armorId)
+      console.log('Armor updated in game')
+    } else {
+      console.log('Game not ready for armor update')
+    }
+  }
 
   const loadGame = useCallback(async () => {
     try {
@@ -109,17 +156,31 @@ export default function MinecraftGame() {
   }, [roomId])
 
   useEffect(() => {
+    // Allow playing without authentication for demo purposes
     if (status === "unauthenticated") {
-      router.push("/auth/signin")
-      return
+      // Set a guest user ID for multiplayer
+      if (typeof window !== 'undefined') {
+        window.currentUserId = `guest-${Math.random().toString(36).substr(2, 9)}`
+      }
     }
 
-    if (status === "authenticated") {
-      loadGame()
+    // Load game regardless of authentication status
+    loadGame()
+    
+    // Listen for game initialization to sync state
+    const handleGameInitialized = (event: CustomEvent) => {
+      const { selectedBlock, selectedWeapon, selectedArmor } = event.detail
+      setSelectedBlock(selectedBlock)
+      setSelectedWeapon(selectedWeapon)
+      setSelectedArmor(selectedArmor)
     }
+    
+    window.addEventListener('gameInitialized', handleGameInitialized as EventListener)
     
     // Cleanup function to prevent memory leaks and stop API calls
     return () => {
+      window.removeEventListener('gameInitialized', handleGameInitialized as EventListener)
+      
       if (window.minecraftGame && typeof window.minecraftGame.cleanup === 'function') {
         window.minecraftGame.cleanup()
       }
@@ -211,13 +272,24 @@ export default function MinecraftGame() {
     
     // Use a longer timeout to ensure cleanup is complete before creating new script
     setTimeout(() => {
+      // Additional cleanup for enhanced game
+      if (typeof window !== 'undefined') {
+        try {
+          if ((window as any).EnhancedMinecraftGame) {
+            delete (window as any).EnhancedMinecraftGame
+          }
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      
       // Check if Phaser is already loaded
       if (window.Phaser) {
         // Phaser already loaded, create game directly
         const gameScript = document.createElement("script")
         gameScript.setAttribute('data-minecraft-game', 'true')
         gameScript.setAttribute('data-timestamp', Date.now().toString())
-        gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
+        gameScript.textContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId)
         document.head.appendChild(gameScript)
         setGameLoaded(true)
       } else {
@@ -229,7 +301,7 @@ export default function MinecraftGame() {
           const gameScript = document.createElement("script")
           gameScript.setAttribute('data-minecraft-game', 'true')
           gameScript.setAttribute('data-timestamp', Date.now().toString())
-          gameScript.textContent = getMinecraftGameCode(savedState, selectedRoomId)
+          gameScript.textContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId)
           document.head.appendChild(gameScript)
           setGameLoaded(true)
         }
@@ -283,10 +355,6 @@ export default function MinecraftGame() {
         </div>
       </div>
     )
-  }
-
-  if (!session) {
-    return null
   }
 
   return (
@@ -412,11 +480,9 @@ export default function MinecraftGame() {
       {/* Game Container */}
       <div className="relative">
         {/* Set current user ID for multiplayer */}
-        {session?.user && (
-          <script dangerouslySetInnerHTML={{
-            __html: `window.currentUserId = "${session.user.email || 'anonymous'}";`
-          }} />
-        )}
+        <script dangerouslySetInnerHTML={{
+          __html: `window.currentUserId = "${session?.user?.email || `guest-${Math.random().toString(36).substr(2, 9)}`}";`
+        }} />
         
         <div id="minecraft-game-container" className="flex justify-center items-center min-h-screen">
           {!gameLoaded && (
@@ -462,6 +528,24 @@ export default function MinecraftGame() {
                   <div className="text-xs text-gray-400">Selected</div>
                   <span id="selected-block-display" className="text-sm font-medium text-green-400">Grass</span>
                 </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <div className="text-red-400">⚔️</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-400">Weapon</div>
+                  <span id="selected-weapon-display" className="text-sm font-medium text-red-400">None</span>
+                </div>
+                <div className="text-xs text-red-300" id="weapon-damage">DMG: 1</div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <div className="text-blue-400">🛡️</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-400">Armor</div>
+                  <span id="selected-armor-display" className="text-sm font-medium text-blue-400">None</span>
+                </div>
+                <div className="text-xs text-blue-300" id="armor-protection">DEF: 0</div>
               </div>
               
               <div className="border-t border-gray-600 pt-3 mt-3">
@@ -530,805 +614,16 @@ export default function MinecraftGame() {
         )}
 
         {/* Enhanced Game Inventory */}
-        <div id="game-inventory" className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-500">
-          <div className="bg-gradient-to-t from-gray-900/95 to-gray-800/95 backdrop-blur-lg rounded-2xl p-6 border-2 border-gray-600 shadow-2xl">
-            {/* Title */}
-            <div className="text-center mb-4">
-              <div className="flex items-center justify-center space-x-2 mb-2">
-                <div className="text-xl">🎒</div>
-                <div className="text-sm text-white font-bold tracking-wide">BUILD BLOCKS</div>
-              </div>
-              <div className="text-xs text-gray-400">Press number keys or click to select</div>
-            </div>
-            
-            {/* Inventory Grid */}
-            <div className="flex space-x-3">
-              {/* Grass Block */}
-              <div className="group relative">
-                <div className="inventory-slot selected bg-gradient-to-br from-green-600 to-green-800 border-3 border-green-400 w-20 h-20 flex flex-col items-center justify-center cursor-pointer rounded-xl hover:scale-105 transition-all duration-200 shadow-lg hover:shadow-green-400/25" data-block="grass">
-                  <div className="text-3xl mb-1">🌱</div>
-                  <div className="text-[10px] text-white font-semibold">GRASS</div>
-                </div>
-                <div className="absolute -top-2 -right-2 bg-green-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">1</div>
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  Grass Block • Press 1
-                </div>
-              </div>
-              
-              {/* Stone Block */}
-              <div className="group relative">
-                <div className="inventory-slot bg-gradient-to-br from-gray-600 to-gray-800 border-3 border-gray-500 w-20 h-20 flex flex-col items-center justify-center cursor-pointer rounded-xl hover:scale-105 hover:border-gray-400 transition-all duration-200 shadow-lg hover:shadow-gray-400/25" data-block="stone">
-                  <div className="text-3xl mb-1">🪨</div>
-                  <div className="text-[10px] text-white font-semibold">STONE</div>
-                </div>
-                <div className="absolute -top-2 -right-2 bg-gray-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">2</div>
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  Stone Block • Press 2
-                </div>
-              </div>
-              
-              {/* Wood Block */}
-              <div className="group relative">
-                <div className="inventory-slot bg-gradient-to-br from-amber-700 to-amber-900 border-3 border-amber-600 w-20 h-20 flex flex-col items-center justify-center cursor-pointer rounded-xl hover:scale-105 hover:border-amber-500 transition-all duration-200 shadow-lg hover:shadow-amber-400/25" data-block="wood">
-                  <div className="text-3xl mb-1">🪵</div>
-                  <div className="text-[10px] text-white font-semibold">WOOD</div>
-                </div>
-                <div className="absolute -top-2 -right-2 bg-amber-600 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">3</div>
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  Wood Block • Press 3
-                </div>
-              </div>
-              
-              {/* Dirt Block */}
-              <div className="group relative">
-                <div className="inventory-slot bg-gradient-to-br from-yellow-800 to-yellow-900 border-3 border-yellow-700 w-20 h-20 flex flex-col items-center justify-center cursor-pointer rounded-xl hover:scale-105 hover:border-yellow-600 transition-all duration-200 shadow-lg hover:shadow-yellow-400/25" data-block="dirt">
-                  <div className="text-3xl mb-1">🟫</div>
-                  <div className="text-[10px] text-white font-semibold">DIRT</div>
-                </div>
-                <div className="absolute -top-2 -right-2 bg-yellow-700 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">4</div>
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  Dirt Block • Press 4
-                </div>
-              </div>
-              
-              {/* Water Block */}
-              <div className="group relative">
-                <div className="inventory-slot bg-gradient-to-br from-blue-600 to-blue-800 border-3 border-blue-500 w-20 h-20 flex flex-col items-center justify-center cursor-pointer rounded-xl hover:scale-105 hover:border-blue-400 transition-all duration-200 shadow-lg hover:shadow-blue-400/25" data-block="water">
-                  <div className="text-3xl mb-1">💧</div>
-                  <div className="text-[10px] text-white font-semibold">WATER</div>
-                </div>
-                <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">5</div>
-                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/90 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  Water Block • Press 5
-                </div>
-              </div>
-            </div>
-            
-            {/* Quick Help */}
-            <div className="mt-4 pt-3 border-t border-gray-600">
-              <div className="text-center text-xs text-gray-400 space-y-1">
-                <div className="flex items-center justify-center space-x-4">
-                  <span>🖱️ <strong>Left Click:</strong> Place</span>
-                  <span>🖱️ <strong>Right Click:</strong> Remove</span>
-                </div>
-                <div>Currently selected: <span className="text-green-400 font-semibold" id="current-block-display">Grass</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <EnhancedInventory
+          selectedBlock={selectedBlock}
+          selectedWeapon={selectedWeapon}
+          selectedArmor={selectedArmor}
+          onBlockSelect={handleBlockSelect}
+          onWeaponSelect={handleWeaponSelect}
+          onArmorSelect={handleArmorSelect}
+        />
       </div>
     </div>
     </>
   )
-}
-
-// Game code as a string to be injected
-function getMinecraftGameCode(savedState: { data: unknown; score: number } | null, selectedRoomId: string) {
-  const timestamp = Date.now()
-  return `
-// Global reference for save/load
-window.minecraftGame = null;
-
-// Clear any existing MinecraftGame class and related objects
-if (typeof window.MinecraftGame !== 'undefined') {
-    delete window.MinecraftGame;
-}
-
-// Clear any existing game config
-if (typeof window.gameConfig !== 'undefined') {
-    delete window.gameConfig;
-}
-
-// Unique namespace to prevent conflicts
-(function() {
-    'use strict';
-    
-    // Minecraft Web Game using Phaser 3 - ${timestamp}
-    class MinecraftGame extends Phaser.Scene {
-    constructor() {
-        super({ key: 'MinecraftGame' });
-        
-        // Game constants
-        this.BLOCK_SIZE = 32;
-        this.WORLD_WIDTH = 50;
-        this.WORLD_HEIGHT = 30;
-        this.GRAVITY = 800;
-        this.JUMP_VELOCITY = -400;
-        this.PLAYER_SPEED = 200;
-        
-        // Game state
-        this.world = [];
-        this.selectedBlock = 'grass';
-        this.score = 0;
-        this.health = 100;
-        
-        // Multiplayer state
-        this.roomId = '${selectedRoomId}';
-        this.otherPlayers = new Map();
-        this.lastMultiplayerUpdate = 0;
-        this.multiplayerUpdateInterval = 2000; // Update every 2 seconds
-        this.lastPlayerPosition = { x: 0, y: 0 }; // Track position changes
-        this.isUpdatingMultiplayer = false; // Prevent concurrent updates
-        this.worldSyncTimeout = null; // Debounce timer for world sync
-        
-        // Saved state
-        this.savedState = ${JSON.stringify(savedState)};
-        
-        // Block types with colors
-        this.blockTypes = {
-            grass: { color: 0x7CB342, emoji: '🌱' },
-            stone: { color: 0x757575, emoji: '🪨' },
-            wood: { color: 0x8D6E63, emoji: '🪵' },
-            dirt: { color: 0x5D4037, emoji: '🟫' },
-            water: { color: 0x2196F3, emoji: '💧' }
-        };
-    }
-    
-    preload() {
-        // Create colored rectangles for blocks
-        Object.keys(this.blockTypes).forEach(blockType => {
-            this.add.graphics()
-                .fillStyle(this.blockTypes[blockType].color)
-                .fillRect(0, 0, this.BLOCK_SIZE, this.BLOCK_SIZE)
-                .generateTexture(blockType, this.BLOCK_SIZE, this.BLOCK_SIZE);
-        });
-        
-        // Create boy player sprite
-        this.createBoyPlayerSprite();
-        
-        // Create other player sprite for multiplayer
-        this.createOtherPlayerSprite();
-    }
-    
-    createBoyPlayerSprite() {
-        const graphics = this.add.graphics();
-        const size = this.BLOCK_SIZE - 4;
-        
-        // Body (blue shirt)
-        graphics.fillStyle(0x4A90E2);
-        graphics.fillRect(6, 12, 20, 16);
-        
-        // Head (skin tone)
-        graphics.fillStyle(0xFFDBAE);
-        graphics.fillRect(8, 2, 16, 12);
-        
-        // Hair (brown)
-        graphics.fillStyle(0x8B4513);
-        graphics.fillRect(8, 2, 16, 6);
-        
-        // Eyes
-        graphics.fillStyle(0x000000);
-        graphics.fillRect(11, 6, 2, 2);
-        graphics.fillRect(19, 6, 2, 2);
-        
-        // Legs (dark blue pants)
-        graphics.fillStyle(0x2C3E50);
-        graphics.fillRect(8, 28, 6, 12);
-        graphics.fillRect(18, 28, 6, 12);
-        
-        // Arms (skin tone)
-        graphics.fillStyle(0xFFDBAE);
-        graphics.fillRect(2, 14, 4, 10);
-        graphics.fillRect(26, 14, 4, 10);
-        
-        graphics.generateTexture('player', size, size);
-        graphics.destroy();
-    }
-    
-    createOtherPlayerSprite() {
-        const graphics = this.add.graphics();
-        const size = this.BLOCK_SIZE - 4;
-        
-        // Body (red shirt)
-        graphics.fillStyle(0xE74C3C);
-        graphics.fillRect(6, 12, 20, 16);
-        
-        // Head (skin tone)
-        graphics.fillStyle(0xFFDBAE);
-        graphics.fillRect(8, 2, 16, 12);
-        
-        // Hair (black)
-        graphics.fillStyle(0x2C3E50);
-        graphics.fillRect(8, 2, 16, 6);
-        
-        // Eyes
-        graphics.fillStyle(0x000000);
-        graphics.fillRect(11, 6, 2, 2);
-        graphics.fillRect(19, 6, 2, 2);
-        
-        // Legs (green pants)
-        graphics.fillStyle(0x27AE60);
-        graphics.fillRect(8, 28, 6, 12);
-        graphics.fillRect(18, 28, 6, 12);
-        
-        // Arms (skin tone)
-        graphics.fillStyle(0xFFDBAE);
-        graphics.fillRect(2, 14, 4, 10);
-        graphics.fillRect(26, 14, 4, 10);
-        
-        graphics.generateTexture('otherPlayer', size, size);
-        graphics.destroy();
-    }
-    
-    create() {
-        // Set global reference
-        window.minecraftGame = this;
-        
-        // Initialize world array
-        this.initializeWorld();
-        
-        // Create world blocks
-        this.blocks = this.physics.add.staticGroup();
-        
-        // Load saved state or generate new terrain
-        if (this.savedState && this.savedState.data) {
-            this.loadWorldFromSave(this.savedState.data);
-            this.score = this.savedState.score || 0;
-        } else {
-            this.generateTerrain();
-        }
-        
-        // Create player
-        this.player = this.physics.add.sprite(400, 100, 'player');
-        this.player.setCollideWorldBounds(true);
-        this.player.body.setGravityY(this.GRAVITY);
-        
-        // Player physics
-        this.physics.add.collider(this.player, this.blocks);
-        
-        // Input handling
-        this.cursors = this.input.keyboard.createCursorKeys();
-        this.wasd = this.input.keyboard.addKeys('W,S,A,D,SPACE');
-        this.numbers = this.input.keyboard.addKeys('ONE,TWO,THREE,FOUR,FIVE');
-        
-        // Mouse input
-        this.input.on('pointerdown', (pointer) => {
-            this.handleClick(pointer);
-        });
-        
-        // Camera setup
-        this.cameras.main.setBounds(0, 0, this.WORLD_WIDTH * this.BLOCK_SIZE, this.WORLD_HEIGHT * this.BLOCK_SIZE);
-        this.cameras.main.startFollow(this.player);
-        
-        // Physics world bounds
-        this.physics.world.setBounds(0, 0, this.WORLD_WIDTH * this.BLOCK_SIZE, this.WORLD_HEIGHT * this.BLOCK_SIZE);
-        
-        // Setup inventory UI
-        this.setupInventoryHandlers();
-        
-        // Background
-        this.add.rectangle(
-            this.WORLD_WIDTH * this.BLOCK_SIZE / 2, 
-            this.WORLD_HEIGHT * this.BLOCK_SIZE / 2, 
-            this.WORLD_WIDTH * this.BLOCK_SIZE, 
-            this.WORLD_HEIGHT * this.BLOCK_SIZE, 
-            0x87CEEB
-        ).setDepth(-1);
-        
-        // Update UI
-        this.updateUI();
-        
-        // Initialize multiplayer
-        this.initializeMultiplayer();
-        
-        console.log('Minecraft game loaded successfully');
-    }
-    
-    async initializeMultiplayer() {
-        try {
-            // Join the multiplayer room
-            await this.joinMultiplayerRoom();
-            
-            // Start multiplayer update loop
-            this.multiplayerTimer = this.time.addEvent({
-                delay: this.multiplayerUpdateInterval,
-                callback: this.updateMultiplayer,
-                callbackScope: this,
-                loop: true
-            });
-            
-            console.log('Multiplayer initialized');
-        } catch (error) {
-            console.error('Failed to initialize multiplayer:', error);
-        }
-    }
-    
-    async joinMultiplayerRoom() {
-        const response = await fetch('/api/games/minecraft/multiplayer', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                roomId: this.roomId,
-                action: 'join',
-                data: { x: this.player.x, y: this.player.y }
-            })
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            this.updateOtherPlayers(data.players);
-        }
-    }
-    
-    async updateMultiplayer() {
-        // Prevent concurrent updates
-        if (this.isUpdatingMultiplayer) return;
-        
-        // Only update if player position has changed significantly
-        const currentPos = { x: Math.floor(this.player.x / 10) * 10, y: Math.floor(this.player.y / 10) * 10 };
-        const positionChanged = Math.abs(currentPos.x - this.lastPlayerPosition.x) > 10 || 
-                               Math.abs(currentPos.y - this.lastPlayerPosition.y) > 10;
-        
-        if (!positionChanged) return;
-        
-        try {
-            this.isUpdatingMultiplayer = true;
-            
-            // Send player position
-            const response = await fetch('/api/games/minecraft/multiplayer', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    roomId: this.roomId,
-                    action: 'move',
-                    data: { x: this.player.x, y: this.player.y }
-                })
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                this.updateOtherPlayers(data.players);
-                this.lastPlayerPosition = currentPos;
-            }
-        } catch (error) {
-            console.error('Multiplayer update failed:', error);
-        } finally {
-            this.isUpdatingMultiplayer = false;
-        }
-    }
-    
-    updateOtherPlayers(players) {
-        // Remove old player sprites
-        this.otherPlayers.forEach(playerData => {
-            playerData.sprite.destroy();
-            playerData.nameText.destroy();
-        });
-        this.otherPlayers.clear();
-        
-        // Add current players (excluding self)
-        const otherPlayersList = players.filter(player => player.id !== window.currentUserId);
-        
-        otherPlayersList.forEach(player => {
-            const playerSprite = this.add.sprite(player.x, player.y, 'otherPlayer');
-            playerSprite.setOrigin(0.5, 0.5);
-            
-            // Add player name label
-            const nameText = this.add.text(player.x, player.y - 40, player.name, {
-                fontSize: '12px',
-                color: '#ffffff',
-                backgroundColor: '#000000',
-                padding: { x: 4, y: 2 }
-            });
-            nameText.setOrigin(0.5, 0.5);
-            
-            this.otherPlayers.set(player.id, {
-                sprite: playerSprite,
-                nameText: nameText,
-                targetX: player.x,
-                targetY: player.y
-            });
-        });
-        
-        // Update player count in UI
-        const playersCountEl = document.getElementById('players-count');
-        if (playersCountEl) {
-            playersCountEl.textContent = (otherPlayersList.length + 1).toString();
-        }
-    }
-    
-    syncWorldState() {
-        // Debounce world state sync to prevent excessive API calls
-        if (this.worldSyncTimeout) {
-            clearTimeout(this.worldSyncTimeout);
-        }
-        
-        this.worldSyncTimeout = setTimeout(async () => {
-            try {
-                const response = await fetch('/api/games/minecraft/multiplayer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        roomId: this.roomId,
-                        action: 'placeBlock',
-                        data: { world: this.serializeWorld() }
-                    })
-                });
-            } catch (error) {
-                console.error('Failed to sync world state:', error);
-            }
-        }, 500); // Wait 500ms before syncing
-    }
-    
-    getGameState() {
-        return {
-            world: this.serializeWorld(),
-            score: this.score,
-            health: this.health,
-            selectedBlock: this.selectedBlock
-        };
-    }
-    
-    serializeWorld() {
-        const serializedWorld = [];
-        for (let x = 0; x < this.WORLD_WIDTH; x++) {
-            serializedWorld[x] = [];
-            for (let y = 0; y < this.WORLD_HEIGHT; y++) {
-                if (this.world[x][y]) {
-                    serializedWorld[x][y] = this.world[x][y].blockType;
-                } else {
-                    serializedWorld[x][y] = null;
-                }
-            }
-        }
-        return serializedWorld;
-    }
-    
-    loadWorldFromSave(savedWorld) {
-        for (let x = 0; x < this.WORLD_WIDTH; x++) {
-            for (let y = 0; y < this.WORLD_HEIGHT; y++) {
-                if (savedWorld[x] && savedWorld[x][y]) {
-                    this.placeBlock(x, y, savedWorld[x][y]);
-                }
-            }
-        }
-    }
-    
-    initializeWorld() {
-        this.world = [];
-        for (let x = 0; x < this.WORLD_WIDTH; x++) {
-            this.world[x] = [];
-            for (let y = 0; y < this.WORLD_HEIGHT; y++) {
-                this.world[x][y] = null;
-            }
-        }
-    }
-    
-    generateTerrain() {
-        const groundLevel = Math.floor(this.WORLD_HEIGHT * 0.7);
-        
-        for (let x = 0; x < this.WORLD_WIDTH; x++) {
-            const height = groundLevel + Math.floor(Math.sin(x * 0.1) * 3);
-            
-            for (let y = height; y < this.WORLD_HEIGHT; y++) {
-                let blockType;
-                if (y === height) {
-                    blockType = 'grass';
-                } else if (y < height + 3) {
-                    blockType = 'dirt';
-                } else {
-                    blockType = 'stone';
-                }
-                
-                this.placeBlock(x, y, blockType);
-            }
-            
-            if (Math.random() < 0.1 && height > 5) {
-                for (let treeY = height - 3; treeY < height; treeY++) {
-                    if (treeY >= 0) {
-                        this.placeBlock(x, treeY, 'wood');
-                    }
-                }
-            }
-        }
-    }
-    
-    placeBlock(x, y, blockType) {
-        if (x < 0 || x >= this.WORLD_WIDTH || y < 0 || y >= this.WORLD_HEIGHT) return false;
-        if (this.world[x][y]) return false;
-        
-        const block = this.blocks.create(
-            x * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
-            y * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
-            blockType
-        );
-        
-        block.setOrigin(0.5, 0.5);
-        block.body.setSize(this.BLOCK_SIZE, this.BLOCK_SIZE);
-        block.blockType = blockType;
-        block.gridX = x;
-        block.gridY = y;
-        
-        this.world[x][y] = block;
-        
-        if (blockType !== 'grass' && blockType !== 'dirt' && blockType !== 'stone') {
-            this.score += 10;
-            this.updateUI();
-        }
-        
-        // Sync with multiplayer
-        this.syncWorldState();
-        
-        return true;
-    }
-    
-    removeBlock(x, y) {
-        if (x < 0 || x >= this.WORLD_WIDTH || y < 0 || y >= this.WORLD_HEIGHT) return false;
-        if (!this.world[x][y]) return false;
-        
-        const block = this.world[x][y];
-        block.destroy();
-        this.world[x][y] = null;
-        
-        this.score += 5;
-        this.updateUI();
-        
-        // Sync with multiplayer
-        this.syncWorldState();
-        
-        return true;
-    }
-    
-    handleClick(pointer) {
-        const worldX = pointer.worldX;
-        const worldY = pointer.worldY;
-        
-        const gridX = Math.floor(worldX / this.BLOCK_SIZE);
-        const gridY = Math.floor(worldY / this.BLOCK_SIZE);
-        
-        if (gridX < 0 || gridX >= this.WORLD_WIDTH || gridY < 0 || gridY >= this.WORLD_HEIGHT) return;
-        
-        const playerGridX = Math.floor(this.player.x / this.BLOCK_SIZE);
-        const playerGridY = Math.floor(this.player.y / this.BLOCK_SIZE);
-        const distance = Math.abs(gridX - playerGridX) + Math.abs(gridY - playerGridY);
-        
-        if (distance > 6) return;
-        
-        if (pointer.button === 0) {
-            if (!this.world[gridX][gridY]) {
-                this.placeBlock(gridX, gridY, this.selectedBlock);
-            }
-        } else if (pointer.button === 2) {
-            if (this.world[gridX][gridY]) {
-                this.removeBlock(gridX, gridY);
-            }
-        }
-    }
-    
-    setupInventoryHandlers() {
-        document.querySelectorAll('.inventory-slot').forEach(slot => {
-            slot.addEventListener('click', () => {
-                // Remove selected class from all slots and update border colors
-                document.querySelectorAll('.inventory-slot').forEach(s => {
-                    s.classList.remove('selected');
-                    // Update border colors for unselected state
-                    const blockType = s.dataset.block;
-                    s.classList.remove('border-green-400', 'border-gray-300', 'border-amber-400', 'border-yellow-500', 'border-blue-300');
-                    if (blockType === 'grass') {
-                        s.classList.add('border-green-600');
-                    } else if (blockType === 'stone') {
-                        s.classList.add('border-gray-500');
-                    } else if (blockType === 'wood') {
-                        s.classList.add('border-amber-600');
-                    } else if (blockType === 'dirt') {
-                        s.classList.add('border-yellow-700');
-                    } else if (blockType === 'water') {
-                        s.classList.add('border-blue-500');
-                    }
-                });
-                
-                // Apply selected styling to clicked slot
-                slot.classList.add('selected');
-                const blockType = slot.dataset.block;
-                slot.classList.remove('border-green-600', 'border-gray-500', 'border-amber-600', 'border-yellow-700', 'border-blue-500');
-                if (blockType === 'grass') {
-                    slot.classList.add('border-green-400');
-                } else if (blockType === 'stone') {
-                    slot.classList.add('border-gray-300');
-                } else if (blockType === 'wood') {
-                    slot.classList.add('border-amber-400');
-                } else if (blockType === 'dirt') {
-                    slot.classList.add('border-yellow-500');
-                } else if (blockType === 'water') {
-                    slot.classList.add('border-blue-300');
-                }
-                
-                this.selectedBlock = slot.dataset.block;
-                this.updateUI();
-            });
-        });
-    }
-    
-    update() {
-        if (this.cursors.left.isDown || this.wasd.A.isDown) {
-            this.player.setVelocityX(-this.PLAYER_SPEED);
-        } else if (this.cursors.right.isDown || this.wasd.D.isDown) {
-            this.player.setVelocityX(this.PLAYER_SPEED);
-        } else {
-            this.player.setVelocityX(0);
-        }
-        
-        if ((this.cursors.up.isDown || this.wasd.W.isDown || this.wasd.SPACE.isDown) && this.player.body.touching.down) {
-            this.player.setVelocityY(this.JUMP_VELOCITY);
-        }
-        
-        if (Phaser.Input.Keyboard.JustDown(this.numbers.ONE)) this.selectBlock(0);
-        if (Phaser.Input.Keyboard.JustDown(this.numbers.TWO)) this.selectBlock(1);
-        if (Phaser.Input.Keyboard.JustDown(this.numbers.THREE)) this.selectBlock(2);
-        if (Phaser.Input.Keyboard.JustDown(this.numbers.FOUR)) this.selectBlock(3);
-        if (Phaser.Input.Keyboard.JustDown(this.numbers.FIVE)) this.selectBlock(4);
-        
-        this.checkWaterDamage();
-        
-        // Update other players' positions smoothly
-        this.otherPlayers.forEach(playerData => {
-            const { sprite, nameText, targetX, targetY } = playerData;
-            
-            // Smooth movement interpolation
-            const lerpFactor = 0.1;
-            sprite.x = Phaser.Math.Linear(sprite.x, targetX, lerpFactor);
-            sprite.y = Phaser.Math.Linear(sprite.y, targetY, lerpFactor);
-            
-            // Update name position
-            nameText.x = sprite.x;
-            nameText.y = sprite.y - 40;
-        });
-    }
-    
-    selectBlock(index) {
-        const blockTypes = Object.keys(this.blockTypes);
-        if (index < blockTypes.length) {
-            this.selectedBlock = blockTypes[index];
-            
-            document.querySelectorAll('.inventory-slot').forEach((slot, i) => {
-                const blockType = slot.dataset.block;
-                if (i === index) {
-                    // Apply selected styling
-                    slot.classList.add('selected');
-                    slot.classList.remove('border-green-600', 'border-gray-500', 'border-amber-600', 'border-yellow-700', 'border-blue-500');
-                    if (blockType === 'grass') {
-                        slot.classList.add('border-green-400');
-                    } else if (blockType === 'stone') {
-                        slot.classList.add('border-gray-300');
-                    } else if (blockType === 'wood') {
-                        slot.classList.add('border-amber-400');
-                    } else if (blockType === 'dirt') {
-                        slot.classList.add('border-yellow-500');
-                    } else if (blockType === 'water') {
-                        slot.classList.add('border-blue-300');
-                    }
-                } else {
-                    // Apply unselected styling
-                    slot.classList.remove('selected');
-                    slot.classList.remove('border-green-400', 'border-gray-300', 'border-amber-400', 'border-yellow-500', 'border-blue-300');
-                    if (blockType === 'grass') {
-                        slot.classList.add('border-green-600');
-                    } else if (blockType === 'stone') {
-                        slot.classList.add('border-gray-500');
-                    } else if (blockType === 'wood') {
-                        slot.classList.add('border-amber-600');
-                    } else if (blockType === 'dirt') {
-                        slot.classList.add('border-yellow-700');
-                    } else if (blockType === 'water') {
-                        slot.classList.add('border-blue-500');
-                    }
-                }
-            });
-            
-            this.updateUI();
-        }
-    }
-    
-    checkWaterDamage() {
-        const playerGridX = Math.floor(this.player.x / this.BLOCK_SIZE);
-        const playerGridY = Math.floor(this.player.y / this.BLOCK_SIZE);
-        
-        if (playerGridX >= 0 && playerGridX < this.WORLD_WIDTH && 
-            playerGridY >= 0 && playerGridY < this.WORLD_HEIGHT) {
-            const block = this.world[playerGridX][playerGridY];
-            if (block && block.blockType === 'water') {
-                this.health -= 0.5;
-                if (this.health <= 0) {
-                    this.health = 0;
-                    this.gameOver();
-                }
-            }
-        }
-    }
-    
-    gameOver() {
-        this.scene.pause();
-        alert("Game Over! Final Score: " + this.score);
-        this.scene.restart();
-        this.health = 100;
-        this.score = 0;
-    }
-    
-    updateUI() {
-        const healthEl = document.getElementById('health-display');
-        const scoreEl = document.getElementById('score-display');
-        const selectedEl = document.getElementById('selected-block-display');
-        const currentBlockEl = document.getElementById('current-block-display');
-        
-        if (healthEl) healthEl.textContent = Math.floor(this.health);
-        if (scoreEl) scoreEl.textContent = this.score;
-        if (selectedEl) selectedEl.textContent = this.selectedBlock.charAt(0).toUpperCase() + this.selectedBlock.slice(1);
-        if (currentBlockEl) currentBlockEl.textContent = this.selectedBlock.charAt(0).toUpperCase() + this.selectedBlock.slice(1);
-    }
-    
-    cleanup() {
-        // Stop multiplayer timer
-        if (this.multiplayerTimer) {
-            this.multiplayerTimer.destroy();
-            this.multiplayerTimer = null;
-        }
-        
-        // Clear world sync timeout
-        if (this.worldSyncTimeout) {
-            clearTimeout(this.worldSyncTimeout);
-            this.worldSyncTimeout = null;
-        }
-        
-        // Clear global reference
-        if (window.minecraftGame === this) {
-            window.minecraftGame = null;
-        }
-        
-        console.log('Minecraft game cleaned up');
-    }
-}
-
-    // Make the class available globally for reuse
-    window.MinecraftGame = MinecraftGame;
-
-    // Game configuration
-    const config = {
-        type: Phaser.AUTO,
-        width: 1024,
-        height: 768,
-        parent: 'minecraft-game-container',
-        backgroundColor: '#87CEEB',
-        physics: {
-            default: 'arcade',
-            arcade: {
-                gravity: { y: 0 },
-                debug: false
-            }
-        },
-        scene: MinecraftGame
-    };
-
-    // Start the game only if one doesn't already exist
-    if (!window.game) {
-        window.game = new Phaser.Game(config);
-    }
-
-    // Disable right-click context menu
-    document.addEventListener('contextmenu', function(e) {
-        if (e.target.tagName === 'CANVAS') {
-            e.preventDefault();
-        }
-    });
-
-})(); // Close IIFE
-`;
 }
