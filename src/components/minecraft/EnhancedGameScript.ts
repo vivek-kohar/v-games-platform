@@ -1,5 +1,6 @@
 export function getEnhancedMinecraftGameCode(savedState: any, roomId: string) {
   const timestamp = Date.now()
+  const safeRoomId = roomId || 'single' // Fallback to 'single' if roomId is undefined
   return `
 // Prevent duplicate class declarations - ${timestamp}
 if (typeof window.EnhancedMinecraftGame !== 'undefined') {
@@ -50,6 +51,29 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.playerInvulnerable = false;
     this.invulnerabilityTime = 1000; // 1 second invulnerability after taking damage
     
+    // Day/Night cycle system
+    this.dayNightCycle = {
+      isDay: true,
+      cycleTime: 0,
+      cycleDuration: 120000, // 2 minutes per cycle (1 min day, 1 min night)
+      dayDuration: 60000, // 1 minute day
+      nightDuration: 60000, // 1 minute night
+      transitionDuration: 5000 // 5 seconds transition
+    };
+    
+    // Enhanced range and visibility
+    this.INTERACTION_RANGE = 12; // Increased from 8
+    this.WEAPON_RANGE = 15; // Extended weapon range
+    
+    // Mob system with night-only spawning
+    this.mobs = [];
+    this.mobSpawnTimer = 0;
+    this.mobSpawnInterval = 3000; // Spawn mob every 3 seconds during night
+    this.maxMobs = 15; // More mobs at once for challenge
+    this.mobBurnTimer = 0;
+    this.mobBurnInterval = 1000; // Check for burning every second
+    this.mobsEnabled = true; // Allow disabling mobs
+    
     // Resource and inventory system
     this.playerInventory = [];
     this.resourceNodes = [];
@@ -71,10 +95,15 @@ if (window.game && typeof window.game.destroy === 'function') {
       diamond: { rarity: 'legendary', value: 50, durability: 12 }
     };
     
-    // Multiplayer
-    this.roomId = '${roomId}';
-    this.otherPlayers = new Map();
+    // Multiplayer system
+    this.isMultiplayer = '${safeRoomId}' && '${safeRoomId}' !== 'single';
+    this.roomId = '${safeRoomId}';
+    this.currentUserId = window.currentUserId || 'guest-' + Math.random().toString(36).substr(2, 9);
+    this.multiplayerSyncTimer = 0;
+    this.multiplayerSyncInterval = 500; // Sync every 500ms for better real-time feel
     this.lastSyncTime = 0;
+    this.otherPlayers = new Map(); // Store other players' data and sprites
+    this.playerSprites = new Map(); // Store player sprites
     this.syncInterval = 1000; // Sync every second
     
     // Block types with new materials
@@ -313,6 +342,11 @@ if (window.game && typeof window.game.destroy === 'function') {
     // Create mob sprites
     this.createMobSprites();
     
+    // Initialize multiplayer if enabled
+    if (this.isMultiplayer) {
+      this.initializeMultiplayer();
+    }
+    
     // Load or generate terrain
     const savedStateData = ${JSON.stringify(savedState)};
     if (savedStateData && savedStateData.data && typeof this.loadWorldFromSave === 'function') {
@@ -328,6 +362,15 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.player.body.setGravityY(this.GRAVITY);
     this.physics.add.collider(this.player, this.blocks);
     this.physics.add.collider(this.mobGroup, this.blocks);
+    
+    // Initialize visual equipment system
+    this.initializeEquipmentVisuals();
+    
+    // Initialize projectile system
+    this.projectiles = [];
+    
+    // Initialize night overlay reference
+    this.nightOverlay = null;
     
     // Combat collisions
     this.physics.add.overlap(this.player, this.mobGroup, this.playerHitByMob, null, this);
@@ -384,7 +427,7 @@ if (window.game && typeof window.game.destroy === 'function') {
       if (savedWorld[x] && Array.isArray(savedWorld[x])) {
         for (let y = 0; y < this.WORLD_HEIGHT && y < savedWorld[x].length; y++) {
           if (savedWorld[x][y]) {
-            this.applyWorldChange(x, y, savedWorld[x][y]);
+            this.applyWorldChange(x, y, savedWorld[x][y], true); // Skip multiplayer sync during loading
           }
         }
       }
@@ -455,7 +498,7 @@ if (window.game && typeof window.game.destroy === 'function') {
     }
   }
   
-  applyWorldChange(x, y, blockType) {
+  applyWorldChange(x, y, blockType, skipMultiplayer = false) {
     if (x < 0 || x >= this.WORLD_WIDTH || y < 0 || y >= this.WORLD_HEIGHT) return;
     
     // Remove existing block
@@ -478,6 +521,11 @@ if (window.game && typeof window.game.destroy === 'function') {
       block.gridY = y;
       this.world[x][y] = block;
     }
+    
+    // Send to multiplayer (only for user-initiated changes, not during terrain generation)
+    if (this.isMultiplayer && !skipMultiplayer) {
+      this.sendWorldChange(x, y, blockType, blockType ? 'place' : 'remove');
+    }
   }
   
   async handleClick(pointer) {
@@ -492,7 +540,7 @@ if (window.game && typeof window.game.destroy === 'function') {
     const playerGridY = Math.floor(this.player.y / this.BLOCK_SIZE);
     const distance = Math.abs(gridX - playerGridX) + Math.abs(gridY - playerGridY);
     
-    if (distance > 8) return; // Increased reach
+    if (distance > this.INTERACTION_RANGE) return; // Extended range
     
     // Check if clicking on a mob first
     const clickedMob = this.getMobAtPosition(worldX, worldY);
@@ -584,18 +632,37 @@ if (window.game && typeof window.game.destroy === 'function') {
     });
   }
   
+  // Redirect to enhanced attack method
   attackMob(mob) {
+    // This method is now handled by the enhanced visual attack system
+    // See the enhanced attackMob method in the visual equipment section
+    return this.performEnhancedAttack(mob);
+  }
+  
+  performEnhancedAttack(mob) {
     if (!mob.isAlive) return;
     
     const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, mob.x, mob.y);
-    if (distance > 100) return; // Too far to attack
+    if (distance > this.WEAPON_RANGE * this.BLOCK_SIZE) return;
     
-    // Deal damage based on weapon
-    this.damageMob(mob, this.damage);
+    // Show weapon attack animation
+    this.showWeaponAttackAnimation(mob);
     
-    // Show attack effect
-    this.showAttackEffect(this.player.x, this.player.y, mob.x, mob.y);
-    this.showWeaponEffect(mob.x, mob.y);
+    // Handle different weapon types
+    switch (this.selectedWeapon) {
+      case 'bow':
+        this.fireArrow(mob);
+        break;
+      case 'sword':
+        this.performMeleeAttack(mob);
+        break;
+      case 'axe':
+        this.performAxeAttack(mob);
+        break;
+      default:
+        this.performPunchAttack(mob);
+        break;
+    }
     
     // Camera shake for impact
     this.cameras.main.shake(50, 0.01);
@@ -629,13 +696,13 @@ if (window.game && typeof window.game.destroy === 'function') {
           blockType = Math.random() < 0.1 ? 'diamond' : 'stone';
         }
         
-        this.applyWorldChange(x, y, blockType);
+        this.applyWorldChange(x, y, blockType, true); // Skip multiplayer sync during terrain generation
       }
       
       // Add trees and ores
       if (Math.random() < 0.08 && height > 10) {
         for (let treeY = height - 4; treeY < height; treeY++) {
-          if (treeY >= 0) this.applyWorldChange(x, treeY, 'wood');
+          if (treeY >= 0) this.applyWorldChange(x, treeY, 'wood', true); // Skip multiplayer sync
         }
       }
       
@@ -644,7 +711,7 @@ if (window.game && typeof window.game.destroy === 'function') {
         const oreY = height + Math.floor(Math.random() * 10) + 5;
         if (oreY < this.WORLD_HEIGHT) {
           const oreType = Math.random() < 0.3 ? 'iron' : (Math.random() < 0.1 ? 'diamond' : 'gold');
-          this.applyWorldChange(x, oreY, oreType);
+          this.applyWorldChange(x, oreY, oreType, true); // Skip multiplayer sync
         }
       }
     }
@@ -688,15 +755,29 @@ if (window.game && typeof window.game.destroy === 'function') {
     
     this.checkEnvironmentalEffects();
     
-    // Mob system updates
-    this.updateMobSpawning();
+    // Update visual equipment
+    this.updateEquipmentVisuals();
+    
+    // Day/Night cycle updates
+    this.updateDayNightCycle();
+    
+    // Mob system updates (only spawn at night and if enabled)
+    if (!this.dayNightCycle.isDay && this.mobsEnabled) {
+      this.updateMobSpawning();
+    }
     this.updateMobAI();
     this.updateCombat();
+    this.updateMobBurning(); // Burn mobs during day
     this.cleanupDeadMobs();
     
     // Resource system updates
     this.updateResourceSpawning();
     this.updateResourceNodes();
+    
+    // Multiplayer system updates
+    if (this.isMultiplayer) {
+      this.updateMultiplayer();
+    }
   }
   
   checkEnvironmentalEffects() {
@@ -783,12 +864,14 @@ if (window.game && typeof window.game.destroy === 'function') {
   setSelectedWeapon(weaponType) {
     this.selectedWeapon = weaponType;
     this.damage = this.weaponStats[weaponType]?.damage || 1;
+    this.updateWeaponVisual(); // Update visual immediately
     this.updateUI();
   }
   
   setSelectedArmor(armorType) {
     this.selectedArmor = armorType;
     this.armor = this.armorStats[armorType]?.protection || 0;
+    this.updateArmorVisual(); // Update visual immediately
     this.updateUI();
   }
   
@@ -799,7 +882,7 @@ if (window.game && typeof window.game.destroy === 'function') {
       if (savedWorld[x] && Array.isArray(savedWorld[x])) {
         for (let y = 0; y < this.WORLD_HEIGHT && y < savedWorld[x].length; y++) {
           if (savedWorld[x][y]) {
-            this.applyWorldChange(x, y, savedWorld[x][y]);
+            this.applyWorldChange(x, y, savedWorld[x][y], true); // Skip multiplayer sync during loading
           }
         }
       }
@@ -1061,7 +1144,7 @@ if (window.game && typeof window.game.destroy === 'function') {
         if (gridX >= 0 && gridX < this.WORLD_WIDTH && gridY >= 0 && gridY < this.WORLD_HEIGHT) {
           const distance = Math.sqrt(dx * dx + dy * dy) * this.BLOCK_SIZE;
           if (distance <= radius && this.world[gridX][gridY]) {
-            this.applyWorldChange(gridX, gridY, null);
+            this.applyWorldChange(gridX, gridY, null, true); // Skip multiplayer sync for explosion cleanup
             this.score += 5; // Bonus points for explosion cleanup
           }
         }
@@ -1258,7 +1341,7 @@ if (window.game && typeof window.game.destroy === 'function') {
     
     if (attempts < 20) {
       // Create resource node
-      this.applyWorldChange(spawnX, spawnY, resourceType);
+      this.applyWorldChange(spawnX, spawnY, resourceType, true); // Skip multiplayer sync for resource spawning
       
       // Add to resource nodes list
       this.resourceNodes.push({
@@ -1281,7 +1364,7 @@ if (window.game && typeof window.game.destroy === 'function') {
       if (currentTime - node.spawnTime > 120000) { // 2 minutes
         // Remove the block if it still exists
         if (this.world[node.x][node.y]) {
-          this.applyWorldChange(node.x, node.y, null);
+          this.applyWorldChange(node.x, node.y, null, true); // Skip multiplayer sync for resource cleanup
         }
         return false;
       }
@@ -1484,6 +1567,905 @@ if (window.game && typeof window.game.destroy === 'function') {
     }
     
     return true;
+  }
+  
+  // Day/Night Cycle System
+  updateDayNightCycle() {
+    this.dayNightCycle.cycleTime += this.time.delta;
+    
+    const wasDay = this.dayNightCycle.isDay;
+    
+    // Check if we should switch between day and night
+    if (this.dayNightCycle.isDay && this.dayNightCycle.cycleTime >= this.dayNightCycle.dayDuration) {
+      this.dayNightCycle.isDay = false;
+      this.dayNightCycle.cycleTime = 0;
+      this.startNightTransition();
+    } else if (!this.dayNightCycle.isDay && this.dayNightCycle.cycleTime >= this.dayNightCycle.nightDuration) {
+      this.dayNightCycle.isDay = true;
+      this.dayNightCycle.cycleTime = 0;
+      this.startDayTransition();
+    }
+    
+    // Update background color based on time
+    this.updateSkyColor();
+    
+    // Show day/night indicator
+    this.updateTimeIndicator();
+  }
+  
+  startNightTransition() {
+    console.log('Night transition starting...');
+    
+    // Visual effect for night beginning
+    this.showTimeTransitionEffect('🌙 Night Falls - Mobs Incoming!', 0x1a1a2e);
+    
+    // Increase mob spawn rate
+    this.mobSpawnInterval = 2000; // Faster spawning at night
+    
+    // Play night sound effect (if available)
+    this.cameras.main.flash(1000, 0, 0, 50, false);
+    
+    // Add night overlay
+    this.createNightOverlay();
+  }
+  
+  startDayTransition() {
+    console.log('Day transition starting...');
+    
+    // Visual effect for day beginning
+    this.showTimeTransitionEffect('☀️ Dawn Breaks - Mobs Burning!', 0x87CEEB);
+    
+    // All mobs start burning
+    this.startMobBurning();
+    
+    // Play day sound effect (if available)
+    this.cameras.main.flash(1000, 255, 255, 100, false);
+    
+    // Remove night overlay
+    this.removeNightOverlay();
+  }
+  
+  createNightOverlay() {
+    if (this.nightOverlay) {
+      this.nightOverlay.destroy();
+    }
+    
+    this.nightOverlay = this.add.rectangle(
+      this.cameras.main.centerX,
+      this.cameras.main.centerY,
+      this.cameras.main.width * 2,
+      this.cameras.main.height * 2,
+      0x000033,
+      0.3
+    );
+    this.nightOverlay.setScrollFactor(0);
+    this.nightOverlay.setDepth(1000);
+    
+    // Fade in the night overlay
+    this.nightOverlay.setAlpha(0);
+    this.tweens.add({
+      targets: this.nightOverlay,
+      alpha: 0.3,
+      duration: 2000,
+      ease: 'Power2'
+    });
+  }
+  
+  removeNightOverlay() {
+    if (this.nightOverlay) {
+      this.tweens.add({
+        targets: this.nightOverlay,
+        alpha: 0,
+        duration: 2000,
+        ease: 'Power2',
+        onComplete: () => {
+          if (this.nightOverlay) {
+            this.nightOverlay.destroy();
+            this.nightOverlay = null;
+          }
+        }
+      });
+    }
+  }
+  
+  updateSkyColor() {
+    const progress = this.dayNightCycle.cycleTime / (this.dayNightCycle.isDay ? this.dayNightCycle.dayDuration : this.dayNightCycle.nightDuration);
+    
+    if (this.dayNightCycle.isDay) {
+      // Day colors: light blue to bright blue
+      const dayColor = Phaser.Display.Color.Interpolate.ColorWithColor(
+        { r: 135, g: 206, b: 235 }, // Light blue
+        { r: 100, g: 149, b: 237 }, // Cornflower blue
+        1,
+        progress
+      );
+      this.cameras.main.setBackgroundColor(Phaser.Display.Color.GetColor(dayColor.r, dayColor.g, dayColor.b));
+    } else {
+      // Night colors: dark blue to very dark
+      const nightColor = Phaser.Display.Color.Interpolate.ColorWithColor(
+        { r: 25, g: 25, b: 112 }, // Midnight blue
+        { r: 15, g: 15, b: 35 },  // Very dark blue
+        1,
+        progress
+      );
+      this.cameras.main.setBackgroundColor(Phaser.Display.Color.GetColor(nightColor.r, nightColor.g, nightColor.b));
+    }
+  }
+  
+  showTimeTransitionEffect(text, color) {
+    const transitionText = this.add.text(
+      this.cameras.main.centerX,
+      this.cameras.main.centerY - 50,
+      text,
+      { 
+        fontSize: '32px', 
+        fill: '#FFFFFF',
+        stroke: '#000000',
+        strokeThickness: 4
+      }
+    );
+    
+    transitionText.setOrigin(0.5);
+    transitionText.setScrollFactor(0); // Stay fixed on screen
+    
+    // Animate the text
+    this.tweens.add({
+      targets: transitionText,
+      alpha: 0,
+      y: transitionText.y - 50,
+      duration: 3000,
+      onComplete: () => transitionText.destroy()
+    });
+  }
+  
+  updateTimeIndicator() {
+    // Update UI with current time
+    const timeEl = document.getElementById('time-display');
+    if (timeEl) {
+      const timeLeft = this.dayNightCycle.isDay ? 
+        this.dayNightCycle.dayDuration - this.dayNightCycle.cycleTime :
+        this.dayNightCycle.nightDuration - this.dayNightCycle.cycleTime;
+      
+      const seconds = Math.ceil(timeLeft / 1000);
+      const timeIcon = this.dayNightCycle.isDay ? '☀️' : '🌙';
+      const timeText = this.dayNightCycle.isDay ? 'Day' : 'Night';
+      
+      timeEl.innerHTML = timeIcon + ' ' + timeText + ' (' + seconds + 's)';
+    }
+  }
+  
+  startMobBurning() {
+    // Mark all existing mobs for burning
+    this.mobs.forEach(mob => {
+      if (mob.isAlive) {
+        mob.isBurning = true;
+        mob.burnStartTime = this.time.now;
+        
+        // Visual burning effect
+        this.showBurningEffect(mob);
+      }
+    });
+  }
+  
+  updateMobBurning() {
+    if (!this.dayNightCycle.isDay) return; // Only burn during day
+    
+    const currentTime = this.time.now;
+    
+    if (currentTime - this.mobBurnTimer > this.mobBurnInterval) {
+      this.mobs.forEach(mob => {
+        if (mob.isAlive && mob.isBurning) {
+          // Deal burning damage
+          mob.health -= 5; // 5 damage per second
+          
+          if (mob.health <= 0) {
+            this.killMob(mob);
+          } else {
+            // Show burning damage effect
+            this.showBurningDamageEffect(mob.x, mob.y);
+          }
+        }
+      });
+      
+      this.mobBurnTimer = currentTime;
+    }
+  }
+  
+  showBurningEffect(mob) {
+    // Create fire particles around mob
+    for (let i = 0; i < 3; i++) {
+      const fire = this.add.circle(
+        mob.x + (Math.random() - 0.5) * 20,
+        mob.y - Math.random() * 15,
+        3,
+        0xFF4500,
+        0.8
+      );
+      
+      this.tweens.add({
+        targets: fire,
+        y: fire.y - 20,
+        alpha: 0,
+        duration: 1000,
+        onComplete: () => fire.destroy()
+      });
+    }
+  }
+  
+  showBurningDamageEffect(x, y) {
+    const damageText = this.add.text(x, y - 20, '-5', { 
+      fontSize: '14px', 
+      fill: '#FF4500',
+      stroke: '#000000',
+      strokeThickness: 2
+    });
+    
+    damageText.setOrigin(0.5);
+    
+    this.tweens.add({
+      targets: damageText,
+      y: y - 40,
+      alpha: 0,
+      duration: 1000,
+      onComplete: () => damageText.destroy()
+    });
+  }
+  
+  setMobsEnabled(enabled) {
+    this.mobsEnabled = enabled;
+    
+    if (!enabled) {
+      // Remove all existing mobs when disabled
+      this.mobs.forEach(mob => {
+        if (mob.sprite && mob.sprite.active) {
+          mob.sprite.destroy();
+        }
+        if (mob.healthBar && mob.healthBar.active) {
+          mob.healthBar.destroy();
+        }
+        if (mob.healthBarBg && mob.healthBarBg.active) {
+          mob.healthBarBg.destroy();
+        }
+      });
+      this.mobs = [];
+      this.updateUI();
+    }
+  }
+  
+  // Multiplayer System
+  updateMultiplayer() {
+    const currentTime = this.time.now;
+    
+    if (currentTime - this.multiplayerSyncTimer > this.multiplayerSyncInterval) {
+      this.syncWithServer();
+      this.multiplayerSyncTimer = currentTime;
+    }
+    
+    // Update other players' positions smoothly
+    this.updateOtherPlayers();
+  }
+  
+  async syncWithServer() {
+    if (!this.roomId) return;
+    
+    try {
+      // Send current player position and state
+      await fetch('/api/games/minecraft/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          action: 'move',
+          data: {
+            x: this.player.x,
+            y: this.player.y
+          }
+        })
+      });
+      
+      // Update player stats
+      await fetch('/api/games/minecraft/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          action: 'updatePlayer',
+          data: {
+            health: this.health,
+            armor: this.armor,
+            weapon: this.selectedWeapon,
+            inventory: this.playerInventory
+          }
+        })
+      });
+      
+      // Get updated game state
+      const response = await fetch('/api/games/minecraft/multiplayer?roomId=' + encodeURIComponent(this.roomId));
+      
+      if (response.ok) {
+        const data = await response.json();
+        this.handleMultiplayerUpdate(data);
+        this.lastSyncTime = data.lastUpdate || Date.now();
+      }
+    } catch (error) {
+      console.error('Multiplayer sync error:', error);
+    }
+  }
+  
+  handleMultiplayerUpdate(data) {
+    console.log('Handling multiplayer update:', data);
+    
+    // Update other players
+    if (data.players && Array.isArray(data.players)) {
+      // Remove players that are no longer in the room
+      this.playerSprites.forEach((spriteData, playerId) => {
+        const playerExists = data.players.some(p => p.id === playerId);
+        if (!playerExists) {
+          this.removeOtherPlayer(playerId);
+        }
+      });
+      
+      // Update or create players
+      data.players.forEach(player => {
+        if (player.id !== this.currentUserId) {
+          this.updateOtherPlayer(player);
+        }
+      });
+    }
+    
+    // Apply recent world changes
+    if (data.recentChanges && Array.isArray(data.recentChanges)) {
+      data.recentChanges.forEach(change => {
+        if (change.playerId !== this.currentUserId) {
+          console.log('Applying remote world change:', change);
+          this.applyRemoteWorldChange(change);
+        }
+      });
+    }
+    
+    // Update UI with player count
+    this.updateMultiplayerUI(data.players ? data.players.length : 0);
+  }
+  
+  updateOtherPlayer(playerData) {
+    const playerId = playerData.id;
+    
+    // Create or update player sprite
+    if (!this.playerSprites.has(playerId)) {
+      this.createOtherPlayerSprite(playerId, playerData);
+    } else {
+      this.updateOtherPlayerSprite(playerId, playerData);
+    }
+    
+    // Store player data
+    this.otherPlayers.set(playerId, playerData);
+  }
+  
+  createOtherPlayerSprite(playerId, playerData) {
+    // Create player sprite
+    const playerSprite = this.add.rectangle(
+      playerData.x, 
+      playerData.y, 
+      this.BLOCK_SIZE - 4, 
+      this.BLOCK_SIZE - 4, 
+      0x00FF00
+    );
+    
+    // Create player name label
+    const nameLabel = this.add.text(
+      playerData.x, 
+      playerData.y - 25, 
+      playerData.name || 'Player', 
+      { 
+        fontSize: '12px', 
+        fill: '#FFFFFF',
+        stroke: '#000000',
+        strokeThickness: 2
+      }
+    );
+    nameLabel.setOrigin(0.5);
+    
+    // Create health bar
+    const healthBarBg = this.add.rectangle(
+      playerData.x, 
+      playerData.y - 15, 
+      30, 4, 
+      0x666666
+    );
+    
+    const healthBar = this.add.rectangle(
+      playerData.x, 
+      playerData.y - 15, 
+      30 * (playerData.health / 100), 4, 
+      0xFF0000
+    );
+    
+    // Create weapon indicator
+    const weaponIcon = this.add.text(
+      playerData.x + 15, 
+      playerData.y - 15, 
+      this.getWeaponEmoji(playerData.weapon), 
+      { fontSize: '12px' }
+    );
+    
+    // Store all sprite components
+    this.playerSprites.set(playerId, {
+      sprite: playerSprite,
+      nameLabel: nameLabel,
+      healthBarBg: healthBarBg,
+      healthBar: healthBar,
+      weaponIcon: weaponIcon,
+      targetX: playerData.x,
+      targetY: playerData.y
+    });
+  }
+  
+  updateOtherPlayerSprite(playerId, playerData) {
+    const playerSprite = this.playerSprites.get(playerId);
+    if (!playerSprite) return;
+    
+    // Update target position for smooth movement
+    playerSprite.targetX = playerData.x;
+    playerSprite.targetY = playerData.y;
+    
+    // Update health bar
+    const healthPercent = playerData.health / 100;
+    playerSprite.healthBar.width = 30 * healthPercent;
+    
+    // Update weapon icon
+    playerSprite.weaponIcon.setText(this.getWeaponEmoji(playerData.weapon));
+    
+    // Update name if changed
+    if (playerData.name) {
+      playerSprite.nameLabel.setText(playerData.name);
+    }
+  }
+  
+  updateOtherPlayers() {
+    // Smooth movement for other players
+    this.playerSprites.forEach((spriteData, playerId) => {
+      const currentX = spriteData.sprite.x;
+      const currentY = spriteData.sprite.y;
+      const targetX = spriteData.targetX;
+      const targetY = spriteData.targetY;
+      
+      // Lerp to target position
+      const lerpFactor = 0.1;
+      const newX = currentX + (targetX - currentX) * lerpFactor;
+      const newY = currentY + (targetY - currentY) * lerpFactor;
+      
+      // Update all sprite components
+      spriteData.sprite.setPosition(newX, newY);
+      spriteData.nameLabel.setPosition(newX, newY - 25);
+      spriteData.healthBarBg.setPosition(newX, newY - 15);
+      spriteData.healthBar.setPosition(newX, newY - 15);
+      spriteData.weaponIcon.setPosition(newX + 15, newY - 15);
+    });
+  }
+  
+  getWeaponEmoji(weaponId) {
+    const weaponEmojis = {
+      'none': '✊',
+      'sword': '⚔️',
+      'bow': '🏹',
+      'axe': '🪓'
+    };
+    return weaponEmojis[weaponId] || '✊';
+  }
+  
+  applyRemoteWorldChange(change) {
+    // Apply world change from another player
+    console.log('Applying remote world change:', change);
+    
+    if (change.x >= 0 && change.x < this.WORLD_WIDTH && 
+        change.y >= 0 && change.y < this.WORLD_HEIGHT) {
+      
+      // Use skipMultiplayer=true to avoid sending this change back to server
+      this.applyWorldChange(change.x, change.y, change.blockType, true);
+    }
+  }
+  
+  async sendWorldChange(x, y, blockType, action) {
+    if (!this.isMultiplayer || !this.roomId) return;
+    
+    try {
+      console.log('Sending world change:', { x, y, blockType, action });
+      
+      const response = await fetch('/api/games/minecraft/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          action: action === 'place' ? 'placeBlock' : 'removeBlock',
+          data: { x, y, blockType }
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('World change sent successfully:', data);
+      }
+    } catch (error) {
+      console.error('Failed to send world change:', error);
+    }
+  }
+  
+  cleanupMultiplayer() {
+    // Clean up other player sprites
+    this.playerSprites.forEach((spriteData, playerId) => {
+      spriteData.sprite.destroy();
+      spriteData.nameLabel.destroy();
+      spriteData.healthBarBg.destroy();
+      spriteData.healthBar.destroy();
+      spriteData.weaponIcon.destroy();
+    });
+    this.playerSprites.clear();
+    this.otherPlayers.clear();
+  }
+  
+  // Visual Equipment System
+  initializeEquipmentVisuals() {
+    // Create weapon sprite (initially hidden)
+    this.weaponSprite = this.add.sprite(this.player.x, this.player.y, 'weapon');
+    this.weaponSprite.setVisible(false);
+    this.weaponSprite.setDepth(10);
+    
+    // Create armor sprites
+    this.armorSprites = {
+      helmet: this.add.sprite(this.player.x, this.player.y - 8, 'armor'),
+      chestplate: this.add.sprite(this.player.x, this.player.y, 'armor'),
+      leggings: this.add.sprite(this.player.x, this.player.y + 8, 'armor'),
+      boots: this.add.sprite(this.player.x, this.player.y + 12, 'armor')
+    };
+    
+    // Hide armor initially
+    Object.values(this.armorSprites).forEach(sprite => {
+      sprite.setVisible(false);
+      sprite.setDepth(5);
+    });
+    
+    // Update equipment visuals
+    this.updateEquipmentVisuals();
+  }
+  
+  updateEquipmentVisuals() {
+    // Update weapon visual
+    this.updateWeaponVisual();
+    
+    // Update armor visual
+    this.updateArmorVisual();
+  }
+  
+  updateWeaponVisual() {
+    if (!this.weaponSprite) return;
+    
+    // Position weapon relative to player
+    this.weaponSprite.setPosition(this.player.x + 15, this.player.y - 5);
+    
+    // Show/hide and style weapon based on selection
+    switch (this.selectedWeapon) {
+      case 'sword':
+        this.weaponSprite.setVisible(true);
+        this.weaponSprite.setTint(0xC0C0C0); // Silver color
+        this.weaponSprite.setScale(0.8, 1.2); // Sword shape
+        this.weaponSprite.setRotation(0.3); // Slight angle
+        break;
+      case 'bow':
+        this.weaponSprite.setVisible(true);
+        this.weaponSprite.setTint(0x8B4513); // Brown color
+        this.weaponSprite.setScale(0.6, 1.0); // Bow shape
+        this.weaponSprite.setRotation(0);
+        break;
+      case 'axe':
+        this.weaponSprite.setVisible(true);
+        this.weaponSprite.setTint(0x654321); // Dark brown handle
+        this.weaponSprite.setScale(1.0, 0.8); // Axe shape
+        this.weaponSprite.setRotation(0.2);
+        break;
+      default:
+        this.weaponSprite.setVisible(false);
+        break;
+    }
+  }
+  
+  updateArmorVisual() {
+    if (!this.armorSprites) return;
+    
+    // Position armor pieces relative to player
+    this.armorSprites.helmet.setPosition(this.player.x, this.player.y - 8);
+    this.armorSprites.chestplate.setPosition(this.player.x, this.player.y);
+    this.armorSprites.leggings.setPosition(this.player.x, this.player.y + 8);
+    this.armorSprites.boots.setPosition(this.player.x, this.player.y + 12);
+    
+    // Show/hide and style armor based on selection
+    const armorColors = {
+      'leather': 0x8B4513,  // Brown
+      'iron': 0xC0C0C0,     // Silver
+      'diamond': 0x00FFFF,  // Cyan
+      'gold': 0xFFD700      // Gold
+    };
+    
+    const armorColor = armorColors[this.selectedArmor] || 0xFFFFFF;
+    const showArmor = this.selectedArmor !== 'none';
+    
+    Object.values(this.armorSprites).forEach(sprite => {
+      sprite.setVisible(showArmor);
+      sprite.setTint(armorColor);
+      sprite.setAlpha(0.7); // Semi-transparent
+    });
+  }
+  
+  // Enhanced Attack System with Visuals - Integrated above
+  
+  showWeaponAttackAnimation(target) {
+    if (!this.weaponSprite || !this.weaponSprite.visible) return;
+    
+    // Store original position and rotation
+    const originalX = this.weaponSprite.x;
+    const originalY = this.weaponSprite.y;
+    const originalRotation = this.weaponSprite.rotation;
+    
+    // Attack animation based on weapon type
+    switch (this.selectedWeapon) {
+      case 'sword':
+        // Sword slash animation
+        this.tweens.add({
+          targets: this.weaponSprite,
+          rotation: originalRotation + 1.5,
+          duration: 150,
+          yoyo: true,
+          ease: 'Power2'
+        });
+        break;
+      case 'axe':
+        // Axe swing animation
+        this.tweens.add({
+          targets: this.weaponSprite,
+          rotation: originalRotation - 1.0,
+          y: originalY + 10,
+          duration: 200,
+          yoyo: true,
+          ease: 'Power2'
+        });
+        break;
+      case 'bow':
+        // Bow draw animation
+        this.tweens.add({
+          targets: this.weaponSprite,
+          scaleX: 0.4,
+          duration: 100,
+          yoyo: true,
+          ease: 'Power2'
+        });
+        break;
+    }
+  }
+  
+  fireArrow(target) {
+    // Create arrow projectile
+    const arrow = this.add.sprite(this.player.x, this.player.y, 'projectile');
+    arrow.setTint(0x8B4513); // Brown arrow
+    arrow.setScale(0.3, 0.8); // Arrow shape
+    arrow.setDepth(15);
+    
+    // Calculate direction to target
+    const angle = Phaser.Math.Angle.Between(this.player.x, this.player.y, target.x, target.y);
+    arrow.setRotation(angle);
+    
+    // Add to projectiles array
+    this.projectiles.push({
+      sprite: arrow,
+      target: target,
+      damage: this.damage,
+      speed: 400,
+      startTime: this.time.now
+    });
+    
+    // Animate arrow flight
+    this.tweens.add({
+      targets: arrow,
+      x: target.x,
+      y: target.y,
+      duration: 500,
+      ease: 'Power2',
+      onComplete: () => {
+        this.hitTarget(target, this.damage);
+        arrow.destroy();
+        // Remove from projectiles array
+        this.projectiles = this.projectiles.filter(p => p.sprite !== arrow);
+      }
+    });
+    
+    // Show arrow trail effect
+    this.showArrowTrail(this.player.x, this.player.y, target.x, target.y);
+  }
+  
+  showArrowTrail(startX, startY, endX, endY) {
+    const trail = this.add.line(0, 0, startX, startY, endX, endY, 0xFFFF00, 0.5);
+    trail.setLineWidth(2);
+    trail.setDepth(12);
+    
+    // Fade out trail
+    this.tweens.add({
+      targets: trail,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => trail.destroy()
+    });
+  }
+  
+  performMeleeAttack(target) {
+    // Immediate damage for melee weapons
+    this.hitTarget(target, this.damage);
+    
+    // Show slash effect
+    this.showSlashEffect(target.x, target.y);
+  }
+  
+  performAxeAttack(target) {
+    // Higher damage for axe
+    this.hitTarget(target, this.damage * 1.2);
+    
+    // Show heavy impact effect
+    this.showHeavyImpactEffect(target.x, target.y);
+  }
+  
+  performPunchAttack(target) {
+    // Lower damage for fists
+    this.hitTarget(target, this.damage * 0.5);
+    
+    // Show punch effect
+    this.showPunchEffect(target.x, target.y);
+  }
+  
+  hitTarget(target, damage) {
+    // Deal damage to target
+    this.damageMob(target, damage);
+    
+    // Show damage number
+    this.showDamageNumber(target.x, target.y, damage);
+  }
+  
+  showSlashEffect(x, y) {
+    // Create slash visual effect
+    const slash = this.add.graphics();
+    slash.lineStyle(3, 0xFFFFFF, 0.8);
+    slash.beginPath();
+    slash.moveTo(x - 20, y - 20);
+    slash.lineTo(x + 20, y + 20);
+    slash.strokePath();
+    slash.setDepth(20);
+    
+    // Animate and destroy
+    this.tweens.add({
+      targets: slash,
+      alpha: 0,
+      scaleX: 1.5,
+      scaleY: 1.5,
+      duration: 200,
+      onComplete: () => slash.destroy()
+    });
+  }
+  
+  showHeavyImpactEffect(x, y) {
+    // Create heavy impact effect
+    for (let i = 0; i < 5; i++) {
+      const spark = this.add.circle(
+        x + (Math.random() - 0.5) * 30,
+        y + (Math.random() - 0.5) * 30,
+        2,
+        0xFFA500,
+        0.8
+      );
+      spark.setDepth(20);
+      
+      this.tweens.add({
+        targets: spark,
+        alpha: 0,
+        scale: 2,
+        duration: 300,
+        onComplete: () => spark.destroy()
+      });
+    }
+  }
+  
+  showPunchEffect(x, y) {
+    // Create simple punch effect
+    const impact = this.add.circle(x, y, 8, 0xFFFFFF, 0.6);
+    impact.setDepth(20);
+    
+    this.tweens.add({
+      targets: impact,
+      alpha: 0,
+      scale: 2,
+      duration: 150,
+      onComplete: () => impact.destroy()
+    });
+  }
+  
+  showDamageNumber(x, y, damage) {
+    const damageText = this.add.text(x, y - 20, '-' + Math.floor(damage), { 
+      fontSize: '16px', 
+      fill: '#FF0000',
+      stroke: '#000000',
+      strokeThickness: 2,
+      fontStyle: 'bold'
+    });
+    
+    damageText.setOrigin(0.5);
+    damageText.setDepth(25);
+    
+    this.tweens.add({
+      targets: damageText,
+      y: y - 50,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => damageText.destroy()
+    });
+  }
+  
+  removeOtherPlayer(playerId) {
+    const spriteData = this.playerSprites.get(playerId);
+    if (spriteData) {
+      spriteData.sprite.destroy();
+      spriteData.nameLabel.destroy();
+      spriteData.healthBarBg.destroy();
+      spriteData.healthBar.destroy();
+      spriteData.weaponIcon.destroy();
+      this.playerSprites.delete(playerId);
+      this.otherPlayers.delete(playerId);
+      console.log('Removed player:', playerId);
+    }
+  }
+  
+  updateMultiplayerUI(playerCount) {
+    // Update UI to show multiplayer status
+    const multiplayerEl = document.getElementById('multiplayer-status');
+    if (multiplayerEl) {
+      multiplayerEl.textContent = playerCount + ' players online';
+    }
+  }
+  
+  initializeMultiplayer() {
+    console.log('Initializing multiplayer for room:', this.roomId);
+    
+    // Join the multiplayer room
+    this.joinMultiplayerRoom();
+    
+    // Start immediate sync
+    this.syncWithServer();
+  }
+  
+  async joinMultiplayerRoom() {
+    if (!this.roomId) return;
+    
+    try {
+      const response = await fetch('/api/games/minecraft/multiplayer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: this.roomId,
+          action: 'join',
+          data: {
+            x: this.player.x,
+            y: this.player.y,
+            health: this.health,
+            armor: this.armor,
+            weapon: this.selectedWeapon,
+            inventory: this.playerInventory
+          }
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Joined multiplayer room successfully:', data);
+        this.handleMultiplayerUpdate(data);
+      }
+    } catch (error) {
+      console.error('Failed to join multiplayer room:', error);
+    }
   }
 }
 

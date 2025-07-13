@@ -108,13 +108,20 @@ export default function EnhancedInventory({
             {weapons.map((weapon) => (
               <div key={weapon.id} className="group relative">
                 <div 
-                  className={`inventory-slot ${selectedWeapon === weapon.id ? 'selected border-red-400' : 'border-red-600'} 
+                  className={`inventory-slot ${selectedWeapon === weapon.id ? 'selected border-red-400 ring-2 ring-red-400/50' : 'border-red-600'} 
                     bg-gradient-to-br from-red-600 to-red-800 border-2
                     w-12 h-12 flex flex-col items-center justify-center cursor-pointer rounded-lg 
                     hover:scale-105 transition-all duration-200 shadow-lg`}
                   onClick={() => onWeaponSelect(weapon.id)}
                 >
                   <div className="text-lg">{weapon.emoji}</div>
+                  
+                  {/* Equipped indicator */}
+                  {selectedWeapon === weapon.id && (
+                    <div className="absolute -top-1 -right-1 bg-red-400 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                      ✓
+                    </div>
+                  )}
                 </div>
                 <div className="absolute -bottom-5 left-1/2 transform -translate-x-1/2 text-xs text-red-400">
                   {weapon.damage}
@@ -136,13 +143,20 @@ export default function EnhancedInventory({
             {armor.map((armorItem) => (
               <div key={armorItem.id} className="group relative">
                 <div 
-                  className={`inventory-slot ${selectedArmor === armorItem.id ? 'selected border-blue-400' : 'border-blue-600'} 
+                  className={`inventory-slot ${selectedArmor === armorItem.id ? 'selected border-blue-400 ring-2 ring-blue-400/50' : 'border-blue-600'} 
                     bg-gradient-to-br from-blue-600 to-blue-800 border-2
                     w-12 h-12 flex flex-col items-center justify-center cursor-pointer rounded-lg 
                     hover:scale-105 transition-all duration-200 shadow-lg`}
                   onClick={() => onArmorSelect(armorItem.id)}
                 >
                   <div className="text-lg">{armorItem.emoji}</div>
+                  
+                  {/* Equipped indicator */}
+                  {selectedArmor === armorItem.id && (
+                    <div className="absolute -top-1 -right-1 bg-blue-400 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                      ✓
+                    </div>
+                  )}
                 </div>
                 <div className="absolute -bottom-5 left-1/2 transform -translate-x-1/2 text-xs text-blue-400">
                   {armorItem.protection}

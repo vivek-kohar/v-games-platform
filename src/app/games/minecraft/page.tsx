@@ -29,6 +29,7 @@ declare global {
       getPlayerInventory: () => any[];
       addToInventory: (item: any) => boolean;
       removeFromInventory: (itemId: string, quantity: number) => boolean;
+      setMobsEnabled: (enabled: boolean) => void;
     } | null;
     currentUserId: string;
     game: {
@@ -109,6 +110,8 @@ export default function MinecraftGame() {
   const [showBank, setShowBank] = useState(false)
   const [bankItems, setBankItems] = useState<any[]>([])
   const [playerInventory, setPlayerInventory] = useState<any[]>([])
+  const [isSaving, setIsSaving] = useState(false)
+  const [mobsEnabled, setMobsEnabled] = useState(true)
 
   const handleBlockSelect = (blockId: string) => {
     setSelectedBlock(blockId)
@@ -273,6 +276,16 @@ export default function MinecraftGame() {
     // Load bank data
     loadBankData()
     
+    // Add keyboard shortcut for save game
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+        event.preventDefault()
+        saveGame()
+      }
+    }
+    
+    document.addEventListener('keydown', handleKeyDown)
+    
     // Set up periodic inventory refresh
     const inventoryInterval = setInterval(() => {
       loadPlayerInventory()
@@ -294,6 +307,7 @@ export default function MinecraftGame() {
     // Cleanup function to prevent memory leaks and stop API calls
     return () => {
       window.removeEventListener('gameInitialized', handleGameInitialized as EventListener)
+      document.removeEventListener('keydown', handleKeyDown)
       clearInterval(inventoryInterval)
       
       if (window.minecraftGame && typeof window.minecraftGame.cleanup === 'function') {
@@ -431,6 +445,7 @@ export default function MinecraftGame() {
       return
     }
 
+    setIsSaving(true)
     setSaveStatus("Saving...")
     
     try {
@@ -457,6 +472,8 @@ export default function MinecraftGame() {
     } catch (error) {
       console.error("Save error:", error)
       setSaveStatus("Error saving game")
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -625,6 +642,34 @@ export default function MinecraftGame() {
           )}
         </div>
 
+        {/* Floating Save Button - Always accessible */}
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col space-y-2">
+          <Button
+            onClick={saveGame}
+            disabled={isSaving || !gameLoaded}
+            size="lg"
+            className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white font-medium transition-all duration-200 shadow-lg rounded-full w-16 h-16"
+          >
+            {isSaving ? <div className="animate-spin text-xl">⏳</div> : <Save className="h-6 w-6" />}
+          </Button>
+          
+          <Button
+            onClick={() => {
+              setMobsEnabled(!mobsEnabled)
+              if (window.minecraftGame && typeof window.minecraftGame.setMobsEnabled === 'function') {
+                window.minecraftGame.setMobsEnabled(!mobsEnabled)
+              }
+            }}
+            size="sm"
+            className={`${mobsEnabled 
+              ? 'bg-red-600 hover:bg-red-700' 
+              : 'bg-green-600 hover:bg-green-700'
+            } text-white font-medium transition-all duration-200 shadow-lg rounded-lg px-3 py-2`}
+          >
+            {mobsEnabled ? '👹 ON' : '🕊️ OFF'}
+          </Button>
+        </div>
+
         {/* Game UI Overlay */}
         {showGameUI && (
           <div id="game-ui" className="absolute top-4 left-4 text-white z-50 animate-in slide-in-from-left duration-300">
@@ -681,6 +726,24 @@ export default function MinecraftGame() {
                   <span id="mob-count-display" className="text-sm font-medium text-red-500">0</span>
                 </div>
               </div>
+              
+              <div className="flex items-center space-x-2">
+                <div className="text-yellow-400">⏰</div>
+                <div className="flex-1">
+                  <div className="text-xs text-gray-400">Time</div>
+                  <span id="time-display" className="text-sm font-medium text-yellow-400">☀️ Day (60s)</span>
+                </div>
+              </div>
+              
+              {roomId && roomId !== 'single' && (
+                <div className="flex items-center space-x-2">
+                  <div className="text-green-400">👥</div>
+                  <div className="flex-1">
+                    <div className="text-xs text-gray-400">Multiplayer</div>
+                    <span id="multiplayer-status" className="text-sm font-medium text-green-400">Connecting...</span>
+                  </div>
+                </div>
+              )}
               
               <div className="border-t border-gray-600 pt-3 mt-3">
                 <div className="flex items-center justify-between">
