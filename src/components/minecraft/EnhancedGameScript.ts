@@ -74,10 +74,31 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.mobBurnInterval = 1000; // Check for burning every second
     this.mobsEnabled = true; // Allow disabling mobs
     
+    // Resource gathering system
+    this.gatheredResources = new Map(); // Track what resources have been gathered
+    this.resourceCounters = new Map(); // Track resource quantities
+    this.resourceGatheringRange = 2; // Range for gathering resources
+    this.gatheringCooldown = 1000; // 1 second cooldown between gathering
+    this.lastGatherTime = 0;
+    
     // Resource and inventory system
     this.playerInventory = [];
-    this.resourceNodes = [];
+    this.resourceNodes = []; // Initialize resource nodes array
     this.maxInventorySize = 50;
+    
+    // Available resources that can be gathered
+    this.availableResources = {
+      'wood': { gathered: false, required: ['tree', 'wood'] },
+      'stone': { gathered: false, required: ['stone'] },
+      'iron': { gathered: false, required: ['iron'] },
+      'gold': { gathered: false, required: ['gold'] },
+      'diamond': { gathered: false, required: ['diamond'] },
+      'dirt': { gathered: true, required: ['dirt'] }, // Always available
+      'grass': { gathered: true, required: ['grass'] } // Always available
+    };
+    
+    // Initialize resource counters
+    this.initializeResourceCounters();
     this.resourceSpawnTimer = 0;
     this.resourceSpawnInterval = 10000; // Spawn resources every 10 seconds
     this.maxResourceNodes = 20;
@@ -558,18 +579,18 @@ if (window.game && typeof window.game.destroy === 'function') {
     if (pointer.button === 0) { // Left click
       // Check if there's a block to attack/break
       if (this.world[gridX][gridY]) {
-        const blockType = this.world[gridX][gridY].blockType;
+        const currentBlockType = this.world[gridX][gridY].blockType;
         const blockKey = gridX + '-' + gridY;
         
         // Get current durability or set initial
-        let currentDurability = this.blockDurability.get(blockKey) || this.resourceRarity[blockType]?.durability || 1;
+        let currentDurability = this.blockDurability.get(blockKey) || this.resourceRarity[currentBlockType]?.durability || 1;
         
         // Apply weapon damage to durability
         currentDurability -= this.damage;
         
         if (currentDurability <= 0) {
           // Block is fully mined - collect resource
-          this.collectResource(blockType, gridX, gridY);
+          this.gatherResourceFromBlock(currentBlockType, gridX, gridY);
           
           // Remove block
           action = 'remove';
@@ -578,7 +599,7 @@ if (window.game && typeof window.game.destroy === 'function') {
           this.blockDurability.delete(blockKey);
           
           // Show mining effect
-          this.showMiningEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, blockType);
+          this.showMiningEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, currentBlockType);
         } else {
           // Block still has durability - update it
           this.blockDurability.set(blockKey, currentDurability);
@@ -590,15 +611,31 @@ if (window.game && typeof window.game.destroy === 'function') {
         // Show weapon effect
         this.showWeaponEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE);
       } 
-      // If no block, place a block
+      // If no block, place a block (check if resource is available)
       else {
-        action = 'place';
-        blockType = this.selectedBlock;
-        this.applyWorldChange(gridX, gridY, blockType);
-        this.score += 10;
+        if (this.canPlaceBlock(this.selectedBlock)) {
+          // Consume the resource
+          if (this.useResource(this.selectedBlock, 1)) {
+            action = 'place';
+            blockType = this.selectedBlock;
+            this.applyWorldChange(gridX, gridY, blockType);
+            this.score += 10;
+            
+            // Show resource consumption effect
+            this.showResourceUsedEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, this.selectedBlock);
+          }
+        } else {
+          // Show message that resource needs to be gathered first
+          this.showResourceRequiredMessage(this.selectedBlock);
+        }
       }
     } else if (pointer.button === 2) { // Right click
       if (this.world[gridX][gridY]) {
+        const removedBlockType = this.world[gridX][gridY].blockType;
+        
+        // Gather resources from removed block (instant removal)
+        this.gatherResourceFromBlock(removedBlockType, gridX, gridY);
+        
         action = 'remove';
         blockType = null;
         this.applyWorldChange(gridX, gridY, null);
@@ -1316,6 +1353,11 @@ if (window.game && typeof window.game.destroy === 'function') {
   
   // Resource Management System
   updateResourceSpawning() {
+    // Initialize resourceNodes if it doesn't exist
+    if (!this.resourceNodes) {
+      this.resourceNodes = [];
+    }
+    
     const currentTime = this.time.now;
     
     if (currentTime - this.resourceSpawnTimer > this.resourceSpawnInterval && 
@@ -1326,6 +1368,11 @@ if (window.game && typeof window.game.destroy === 'function') {
   }
   
   spawnResourceNode() {
+    // Initialize resourceNodes if it doesn't exist
+    if (!this.resourceNodes) {
+      this.resourceNodes = [];
+    }
+    
     // Choose rare resource types for special nodes
     const rareResources = ['iron', 'gold', 'diamond'];
     const resourceType = rareResources[Math.floor(Math.random() * rareResources.length)];
@@ -1358,12 +1405,18 @@ if (window.game && typeof window.game.destroy === 'function') {
   }
   
   updateResourceNodes() {
+    // Initialize resourceNodes if it doesn't exist
+    if (!this.resourceNodes) {
+      this.resourceNodes = [];
+      return;
+    }
+    
     // Remove old resource nodes after 2 minutes
     const currentTime = this.time.now;
     this.resourceNodes = this.resourceNodes.filter(node => {
       if (currentTime - node.spawnTime > 120000) { // 2 minutes
         // Remove the block if it still exists
-        if (this.world[node.x][node.y]) {
+        if (this.world[node.x] && this.world[node.x][node.y]) {
           this.applyWorldChange(node.x, node.y, null, true); // Skip multiplayer sync for resource cleanup
         }
         return false;
@@ -1375,6 +1428,11 @@ if (window.game && typeof window.game.destroy === 'function') {
   collectResource(blockType, gridX, gridY) {
     const resourceData = this.resourceRarity[blockType];
     if (!resourceData) return;
+    
+    // Initialize resourceNodes if it doesn't exist
+    if (!this.resourceNodes) {
+      this.resourceNodes = [];
+    }
     
     // Check if this is a rich resource node
     const isRichNode = this.resourceNodes.some(node => 
@@ -1419,9 +1477,11 @@ if (window.game && typeof window.game.destroy === 'function') {
       this.showResourceCollectionEffect(gridX * this.BLOCK_SIZE, gridY * this.BLOCK_SIZE, resourceItem);
       
       // Remove from resource nodes if it was one
-      this.resourceNodes = this.resourceNodes.filter(node => 
-        !(node.x === gridX && node.y === gridY)
-      );
+      if (this.resourceNodes) {
+        this.resourceNodes = this.resourceNodes.filter(node => 
+          !(node.x === gridX && node.y === gridY)
+        );
+      }
       
     } else {
       // Inventory full - show warning
@@ -1669,7 +1729,8 @@ if (window.game && typeof window.game.destroy === 'function') {
   }
   
   updateSkyColor() {
-    const progress = this.dayNightCycle.cycleTime / (this.dayNightCycle.isDay ? this.dayNightCycle.dayDuration : this.dayNightCycle.nightDuration);
+    const currentPhaseDuration = this.dayNightCycle.isDay ? this.dayNightCycle.dayDuration : this.dayNightCycle.nightDuration;
+    const progress = currentPhaseDuration > 0 ? Math.min(1, this.dayNightCycle.cycleTime / currentPhaseDuration) : 0;
     
     if (this.dayNightCycle.isDay) {
       // Day colors: light blue to bright blue
@@ -1722,11 +1783,14 @@ if (window.game && typeof window.game.destroy === 'function') {
     // Update UI with current time
     const timeEl = document.getElementById('time-display');
     if (timeEl) {
-      const timeLeft = this.dayNightCycle.isDay ? 
-        this.dayNightCycle.dayDuration - this.dayNightCycle.cycleTime :
-        this.dayNightCycle.nightDuration - this.dayNightCycle.cycleTime;
+      // Ensure we have valid values
+      const currentPhaseDuration = this.dayNightCycle.isDay ? this.dayNightCycle.dayDuration : this.dayNightCycle.nightDuration;
+      const cycleTime = this.dayNightCycle.cycleTime || 0;
       
-      const seconds = Math.ceil(timeLeft / 1000);
+      // Calculate remaining time safely
+      const timeLeft = Math.max(0, currentPhaseDuration - cycleTime);
+      const seconds = Math.max(0, Math.ceil(timeLeft / 1000));
+      
       const timeIcon = this.dayNightCycle.isDay ? '☀️' : '🌙';
       const timeText = this.dayNightCycle.isDay ? 'Day' : 'Night';
       
@@ -2380,6 +2444,392 @@ if (window.game && typeof window.game.destroy === 'function') {
       scale: 2,
       duration: 150,
       onComplete: () => impact.destroy()
+    });
+  }
+  
+  // Resource Gathering System
+  checkResourceGathering() {
+    if (this.time.now - this.lastGatherTime < this.gatheringCooldown) return;
+    
+    const playerGridX = Math.floor(this.player.x / this.BLOCK_SIZE);
+    const playerGridY = Math.floor(this.player.y / this.BLOCK_SIZE);
+    
+    // Check nearby blocks for resources to gather
+    for (let dx = -this.resourceGatheringRange; dx <= this.resourceGatheringRange; dx++) {
+      for (let dy = -this.resourceGatheringRange; dy <= this.resourceGatheringRange; dy++) {
+        const checkX = playerGridX + dx;
+        const checkY = playerGridY + dy;
+        
+        if (checkX >= 0 && checkX < this.WORLD_WIDTH && checkY >= 0 && checkY < this.WORLD_HEIGHT) {
+          const block = this.world[checkX][checkY];
+          if (block && block.blockType) {
+            this.tryGatherResource(block.blockType, checkX, checkY);
+          }
+        }
+      }
+    }
+  }
+  
+  tryGatherResource(blockType, x, y) {
+    // Check if this resource type can be gathered
+    const resourceInfo = this.availableResources[blockType];
+    if (!resourceInfo) return;
+    
+    // Check if already gathered this type
+    if (resourceInfo.gathered) return;
+    
+    // Mark as gathered
+    resourceInfo.gathered = true;
+    this.gatheredResources.set(blockType, true);
+    this.lastGatherTime = this.time.now;
+    
+    // Show gathering effect
+    this.showResourceGatheringEffect(x * this.BLOCK_SIZE, y * this.BLOCK_SIZE, blockType);
+    
+    // Add to inventory
+    this.addGatheredResourceToInventory(blockType);
+    
+    // Update UI
+    this.updateResourceAvailability();
+    
+    console.log('Gathered resource:', blockType);
+  }
+  
+  showResourceGatheringEffect(x, y, resourceType, quantity = 1, actionMessage = 'Gathered') {
+    // Create gathering visual effect
+    const gatherEffect = this.add.circle(x + this.BLOCK_SIZE/2, y + this.BLOCK_SIZE/2, 15, 0x00FF00, 0.6);
+    gatherEffect.setDepth(30);
+    
+    // Add resource icon
+    const resourceIcon = this.add.text(
+      x + this.BLOCK_SIZE/2, 
+      y + this.BLOCK_SIZE/2, 
+      this.getResourceIcon(resourceType), 
+      { fontSize: '20px' }
+    );
+    resourceIcon.setOrigin(0.5);
+    resourceIcon.setDepth(31);
+    
+    // Add action-specific message with quantity
+    const gatherText = this.add.text(
+      x + this.BLOCK_SIZE/2, 
+      y + this.BLOCK_SIZE/2 - 30, 
+      actionMessage + ' +' + quantity + ' ' + resourceType + '!', 
+      { 
+        fontSize: '14px', 
+        fill: '#00FF00',
+        stroke: '#000000',
+        strokeThickness: 2,
+        fontStyle: 'bold'
+      }
+    );
+    gatherText.setOrigin(0.5);
+    gatherText.setDepth(31);
+    
+    // Animate effects
+    this.tweens.add({
+      targets: [gatherEffect, resourceIcon, gatherText],
+      y: y - 50,
+      alpha: 0,
+      scale: 1.5,
+      duration: 1500,
+      ease: 'Power2',
+      onComplete: () => {
+        gatherEffect.destroy();
+        resourceIcon.destroy();
+        gatherText.destroy();
+      }
+    });
+  }
+  
+  getResourceIcon(resourceType) {
+    const icons = {
+      'wood': '🪵',
+      'stone': '🪨',
+      'iron': '⚙️',
+      'gold': '🥇',
+      'diamond': '💎',
+      'dirt': '🟫',
+      'grass': '🌱'
+    };
+    return icons[resourceType] || '📦';
+  }
+  
+  addGatheredResourceToInventory(resourceType) {
+    const resourceItem = {
+      id: 'resource_' + resourceType + '_' + Date.now(),
+      name: resourceType.charAt(0).toUpperCase() + resourceType.slice(1),
+      type: 'resource',
+      quantity: 1,
+      icon: this.getResourceIcon(resourceType),
+      rarity: this.getResourceRarity(resourceType),
+      description: 'Gathered ' + resourceType + ' resource',
+      value: this.getResourceValue(resourceType),
+      blockType: resourceType
+    };
+    
+    // Add to player inventory
+    if (this.playerInventory.length < this.maxInventorySize) {
+      // Check if item already exists
+      const existingItem = this.playerInventory.find(item => 
+        item.blockType === resourceType && item.type === 'resource'
+      );
+      
+      if (existingItem) {
+        existingItem.quantity += 1;
+      } else {
+        this.playerInventory.push(resourceItem);
+      }
+    }
+  }
+  
+  getResourceRarity(resourceType) {
+    const rarities = {
+      'dirt': 'common',
+      'grass': 'common',
+      'wood': 'common',
+      'stone': 'common',
+      'iron': 'rare',
+      'gold': 'epic',
+      'diamond': 'legendary'
+    };
+    return rarities[resourceType] || 'common';
+  }
+  
+  getResourceValue(resourceType) {
+    const values = {
+      'dirt': 1,
+      'grass': 1,
+      'wood': 2,
+      'stone': 3,
+      'iron': 10,
+      'gold': 25,
+      'diamond': 100
+    };
+    return values[resourceType] || 1;
+  }
+  
+  updateResourceAvailability() {
+    // Update UI to show which resources are available for use
+    const resourceStatus = {};
+    for (const [resourceType, info] of Object.entries(this.availableResources)) {
+      resourceStatus[resourceType] = info.gathered;
+    }
+    
+    // Store in window for UI access
+    window.gatheredResources = resourceStatus;
+    
+    // Trigger UI update
+    if (typeof window.updateResourceUI === 'function') {
+      window.updateResourceUI(resourceStatus);
+    }
+  }
+  
+  canUseResource(resourceType) {
+    // Initialize availableResources if it doesn't exist
+    if (!this.availableResources) {
+      this.availableResources = {
+        'wood': { gathered: false, required: ['tree', 'wood'] },
+        'stone': { gathered: false, required: ['stone'] },
+        'iron': { gathered: false, required: ['iron'] },
+        'gold': { gathered: false, required: ['gold'] },
+        'diamond': { gathered: false, required: ['diamond'] },
+        'dirt': { gathered: true, required: ['dirt'] }, // Always available
+        'grass': { gathered: true, required: ['grass'] } // Always available
+      };
+    }
+    
+    return this.availableResources[resourceType]?.gathered || false;
+  }
+  
+  canPlaceBlock(blockType) {
+    // Initialize availableResources if it doesn't exist
+    if (!this.availableResources) {
+      this.availableResources = {
+        'wood': { gathered: false, required: ['tree', 'wood'] },
+        'stone': { gathered: false, required: ['stone'] },
+        'iron': { gathered: false, required: ['iron'] },
+        'gold': { gathered: false, required: ['gold'] },
+        'diamond': { gathered: false, required: ['diamond'] },
+        'dirt': { gathered: true, required: ['dirt'] }, // Always available
+        'grass': { gathered: true, required: ['grass'] } // Always available
+      };
+    }
+    
+    // Check if we have at least 1 of this resource
+    return this.canAffordResource(blockType, 1);
+  }
+  
+  // Override block placement to check resource availability
+  // Resource Counter System
+  initializeResourceCounters() {
+    // Initialize all resource counters to 0
+    const resourceTypes = ['wood', 'stone', 'iron', 'gold', 'diamond', 'dirt', 'grass'];
+    resourceTypes.forEach(resource => {
+      this.resourceCounters.set(resource, resource === 'dirt' || resource === 'grass' ? 10 : 0);
+    });
+  }
+  
+  getResourceCount(resourceType) {
+    return this.resourceCounters.get(resourceType) || 0;
+  }
+  
+  addResource(resourceType, quantity = 1) {
+    const currentCount = this.getResourceCount(resourceType);
+    this.resourceCounters.set(resourceType, currentCount + quantity);
+    
+    // Mark as gathered if not already
+    if (!this.availableResources[resourceType]?.gathered) {
+      this.availableResources[resourceType].gathered = true;
+      this.gatheredResources.set(resourceType, true);
+    }
+    
+    // Update UI
+    this.updateResourceUI();
+  }
+  
+  useResource(resourceType, quantity = 1) {
+    const currentCount = this.getResourceCount(resourceType);
+    if (currentCount >= quantity) {
+      this.resourceCounters.set(resourceType, currentCount - quantity);
+      this.updateResourceUI();
+      return true;
+    }
+    return false;
+  }
+  
+  canAffordResource(resourceType, quantity = 1) {
+    return this.getResourceCount(resourceType) >= quantity;
+  }
+  
+  updateResourceUI() {
+    // Update the resource status display
+    const resourceStatus = {};
+    const resourceCounts = {};
+    
+    for (const [resourceType, info] of Object.entries(this.availableResources)) {
+      resourceStatus[resourceType] = info.gathered;
+      resourceCounts[resourceType] = this.getResourceCount(resourceType);
+    }
+    
+    // Store in window for UI access
+    window.gatheredResources = resourceStatus;
+    window.resourceCounts = resourceCounts;
+    
+    // Trigger UI update
+    if (typeof window.updateResourceUI === 'function') {
+      window.updateResourceUI(resourceStatus, resourceCounts);
+    }
+  }
+  
+  showResourceRequiredMessage(blockType) {
+    const currentCount = this.getResourceCount(blockType);
+    const message = this.add.text(
+      this.player.x, 
+      this.player.y - 50, 
+      'Need ' + blockType + '! (Have: ' + currentCount + ')', 
+      { 
+        fontSize: '16px', 
+        fill: '#FF6B6B',
+        stroke: '#000000',
+        strokeThickness: 2,
+        fontStyle: 'bold'
+      }
+    );
+    
+    message.setOrigin(0.5);
+    message.setDepth(50);
+    
+    this.tweens.add({
+      targets: message,
+      y: this.player.y - 80,
+      alpha: 0,
+      duration: 2000,
+      ease: 'Power2',
+      onComplete: () => message.destroy()
+    });
+  }
+  
+  // Deliberate Resource Gathering (through mining/chopping)
+  gatherResourceFromBlock(blockType, gridX, gridY) {
+    // Check if this block type gives resources
+    if (!this.availableResources[blockType]) return;
+    
+    // Calculate quantity based on block type, tools, and mining action
+    let quantity = this.calculateMiningYield(blockType);
+    
+    // Add resources to inventory
+    this.addResource(blockType, quantity);
+    
+    // Show gathering effect with action-specific message
+    const actionMessage = this.getActionMessage(blockType);
+    this.showResourceGatheringEffect(
+      gridX * this.BLOCK_SIZE, 
+      gridY * this.BLOCK_SIZE, 
+      blockType, 
+      quantity,
+      actionMessage
+    );
+    
+    console.log('Mined', quantity, blockType, 'from block - Total:', this.getResourceCount(blockType));
+  }
+  
+  calculateMiningYield(blockType) {
+    let baseQuantity = 1;
+    
+    // Tool efficiency bonuses for deliberate actions
+    const toolBonuses = {
+      'wood': this.selectedWeapon === 'axe' ? 2 : 1,      // Axe is best for wood
+      'stone': this.selectedWeapon === 'sword' ? 2 : 1,   // Sword works well on stone
+      'iron': this.selectedWeapon === 'sword' ? 3 : 1,    // Sword is best for metals
+      'gold': this.selectedWeapon === 'sword' ? 3 : 1,    // Sword is best for metals
+      'diamond': this.selectedWeapon === 'sword' ? 4 : 1, // Sword is best for precious metals
+      'dirt': 2, // Always easy to dig
+      'grass': 2  // Always easy to dig
+    };
+    
+    return toolBonuses[blockType] || baseQuantity;
+  }
+  
+  getActionMessage(blockType) {
+    const actionMessages = {
+      'wood': 'Chopped',
+      'stone': 'Mined',
+      'iron': 'Mined',
+      'gold': 'Mined',
+      'diamond': 'Mined',
+      'dirt': 'Dug',
+      'grass': 'Dug'
+    };
+    
+    return actionMessages[blockType] || 'Gathered';
+  }
+  
+  showResourceUsedEffect(x, y, resourceType) {
+    // Show resource consumption effect
+    const usedText = this.add.text(
+      x + this.BLOCK_SIZE/2, 
+      y + this.BLOCK_SIZE/2 - 20, 
+      '-1 ' + resourceType, 
+      { 
+        fontSize: '12px', 
+        fill: '#FF9999',
+        stroke: '#000000',
+        strokeThickness: 1,
+        fontStyle: 'bold'
+      }
+    );
+    usedText.setOrigin(0.5);
+    usedText.setDepth(31);
+    
+    // Animate effect
+    this.tweens.add({
+      targets: usedText,
+      y: y - 40,
+      alpha: 0,
+      duration: 1000,
+      ease: 'Power2',
+      onComplete: () => usedText.destroy()
     });
   }
   

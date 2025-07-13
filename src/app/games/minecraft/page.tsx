@@ -32,6 +32,9 @@ declare global {
       setMobsEnabled: (enabled: boolean) => void;
     } | null;
     currentUserId: string;
+    updateResourceUI?: (resourceStatus: any, resourceCounts?: any) => void;
+    gatheredResources?: any;
+    resourceCounts?: any;
     game: {
       destroy: (removeCanvas?: boolean) => void;
     } | null;
@@ -103,6 +106,25 @@ export default function MinecraftGame() {
   const [roomId, setRoomId] = useState("default")
   const [showRoomSelector, setShowRoomSelector] = useState(true)
   const [showInstructions, setShowInstructions] = useState(true)
+  const [gatheredResources, setGatheredResources] = useState({
+    wood: false,
+    stone: false,
+    iron: false,
+    gold: false,
+    diamond: false,
+    dirt: true, // Always available
+    grass: true // Always available
+  })
+  
+  const [resourceCounts, setResourceCounts] = useState({
+    wood: 0,
+    stone: 0,
+    iron: 0,
+    gold: 0,
+    diamond: 0,
+    dirt: 10, // Start with some basic resources
+    grass: 10 // Start with some basic resources
+  })
   const [showGameUI, setShowGameUI] = useState(true)
   const [selectedBlock, setSelectedBlock] = useState("grass")
   const [selectedWeapon, setSelectedWeapon] = useState("none")
@@ -149,11 +171,18 @@ export default function MinecraftGame() {
   const loadBankData = useCallback(async () => {
     try {
       const userId = session?.user?.email || 'guest-' + Math.random().toString(36).substr(2, 9)
+      console.log('Loading bank data for user:', userId)
+      
       const response = await fetch('/api/games/minecraft/bank?guestId=' + encodeURIComponent(userId))
       
       if (response.ok) {
         const data = await response.json()
+        console.log('Bank data loaded:', data)
         setBankItems(data.bankItems || [])
+      } else {
+        console.error('Bank API error:', response.status, response.statusText)
+        const errorData = await response.text()
+        console.error('Error details:', errorData)
       }
     } catch (error) {
       console.error('Failed to load bank data:', error)
@@ -347,6 +376,20 @@ export default function MinecraftGame() {
       }
     }
   }, [status, router, roomId, loadGame, loadBankData, loadPlayerInventory])
+
+  // Expose resource update function to game
+  useEffect(() => {
+    window.updateResourceUI = (resourceStatus: any, resourceCounts?: any) => {
+      setGatheredResources(resourceStatus)
+      if (resourceCounts) {
+        setResourceCounts(resourceCounts)
+      }
+    }
+    
+    return () => {
+      delete window.updateResourceUI
+    }
+  }, [])
 
   const initializeMinecraftGame = (savedState: { data: unknown; score: number } | null, selectedRoomId: string) => {
     // Clean up any existing game instances and scripts
@@ -735,6 +778,41 @@ export default function MinecraftGame() {
                 </div>
               </div>
               
+              {/* Resource Status Display */}
+              <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+                <div className="text-xs text-gray-400 mb-2">📦 Resource Inventory</div>
+                <div className="grid grid-cols-4 gap-1">
+                  {Object.entries(gatheredResources).map(([resource, gathered]) => (
+                    <div 
+                      key={resource}
+                      className={`flex flex-col items-center p-1 rounded text-xs ${
+                        gathered 
+                          ? 'bg-green-900/50 text-green-300' 
+                          : 'bg-gray-800/50 text-gray-500'
+                      }`}
+                      title={`${resource.charAt(0).toUpperCase() + resource.slice(1)} - ${gathered ? 'Available' : 'Walk near to gather'}`}
+                    >
+                      <span className="text-sm">
+                        {resource === 'wood' && '🪵'}
+                        {resource === 'stone' && '🪨'}
+                        {resource === 'iron' && '⚙️'}
+                        {resource === 'gold' && '🥇'}
+                        {resource === 'diamond' && '💎'}
+                        {resource === 'dirt' && '🟫'}
+                        {resource === 'grass' && '🌱'}
+                      </span>
+                      <span className="text-xs font-bold">
+                        {(resourceCounts as any)[resource] || 0}
+                      </span>
+                      {gathered && <span className="text-green-400 text-xs">✓</span>}
+                    </div>
+                  ))}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Mine blocks to gather resources • Use resources to build
+                </div>
+              </div>
+              
               {roomId && roomId !== 'single' && (
                 <div className="flex items-center space-x-2">
                   <div className="text-green-400">👥</div>
@@ -787,9 +865,15 @@ export default function MinecraftGame() {
                   </div>
                   <div className="bg-gray-800/50 rounded p-2">
                     <div className="text-green-400 font-medium mb-1">Building</div>
-                    <div>Left Click - Place</div>
-                    <div>Right Click - Break</div>
+                    <div>Left Click - Mine/Place</div>
+                    <div>Right Click - Quick Mine</div>
                   </div>
+                </div>
+                
+                <div className="bg-gray-800/50 rounded p-2">
+                  <div className="text-purple-400 font-medium mb-1">Resources</div>
+                  <div className="text-xs">Mine blocks to gather materials</div>
+                  <div className="text-xs">Use axe for wood, sword for metals</div>
                 </div>
                 
                 <div className="bg-gray-800/50 rounded p-2">
