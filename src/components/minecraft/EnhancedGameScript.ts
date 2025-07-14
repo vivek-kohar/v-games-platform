@@ -55,6 +55,7 @@ if (window.game && typeof window.game.destroy === 'function') {
     this.dayNightCycle = {
       isDay: true,
       cycleTime: 0,
+      startTime: 0, // Will be set in create()
       cycleDuration: 120000, // 2 minutes per cycle (1 min day, 1 min night)
       dayDuration: 60000, // 1 minute day
       nightDuration: 60000, // 1 minute night
@@ -94,7 +95,14 @@ if (window.game && typeof window.game.destroy === 'function') {
       'gold': { gathered: false, required: ['gold'] },
       'diamond': { gathered: false, required: ['diamond'] },
       'dirt': { gathered: true, required: ['dirt'] }, // Always available
-      'grass': { gathered: true, required: ['grass'] } // Always available
+      'grass': { gathered: true, required: ['grass'] }, // Always available
+      'water': { gathered: false, required: ['water'] },
+      'lava': { gathered: false, required: ['lava'] },
+      'sand': { gathered: false, required: ['sand'] },
+      'coal': { gathered: false, required: ['coal'] },
+      'emerald': { gathered: false, required: ['emerald'] },
+      'obsidian': { gathered: false, required: ['obsidian'] },
+      'bedrock': { gathered: false, required: ['bedrock'] }
     };
     
     // Initialize resource counters
@@ -119,6 +127,10 @@ if (window.game && typeof window.game.destroy === 'function') {
     // Multiplayer system
     this.isMultiplayer = '${safeRoomId}' && '${safeRoomId}' !== 'single';
     this.roomId = '${safeRoomId}';
+    console.log('=== GAME INITIALIZATION DEBUG ===');
+    console.log('Room ID set to:', this.roomId);
+    console.log('Is Multiplayer:', this.isMultiplayer);
+    console.log('Safe Room ID:', '${safeRoomId}');
     this.currentUserId = window.currentUserId || 'guest-' + Math.random().toString(36).substr(2, 9);
     this.multiplayerSyncTimer = 0;
     this.multiplayerSyncInterval = 500; // Sync every 500ms for better real-time feel
@@ -356,8 +368,22 @@ if (window.game && typeof window.game.destroy === 'function') {
     
     // Initialize larger world
     this.initializeWorld();
+    
+    // Generate terrain data (without visual blocks)
+    this.generateEnhancedTerrain();
+    
+    // Create physics groups
     this.blocks = this.physics.add.staticGroup();
     this.mobGroup = this.physics.add.group();
+    
+    // Create visual blocks from terrain data
+    this.createVisualBlocks();
+    
+    // Create sun and moon
+    this.createCelestialBodies();
+    
+    // Initialize day/night cycle start time
+    this.dayNightCycle.startTime = this.time.now;
     this.projectileGroup = this.physics.add.group();
     
     // Create mob sprites
@@ -522,29 +548,29 @@ if (window.game && typeof window.game.destroy === 'function') {
   applyWorldChange(x, y, blockType, skipMultiplayer = false) {
     if (x < 0 || x >= this.WORLD_WIDTH || y < 0 || y >= this.WORLD_HEIGHT) return;
     
-    // Remove existing block
+    // Remove existing block (both data and visual)
     if (this.world[x][y]) {
-      this.world[x][y].destroy();
+      // Remove visual sprite if it exists
+      if (this.world[x][y].sprite) {
+        this.world[x][y].sprite.destroy();
+      }
       this.world[x][y] = null;
     }
     
     // Place new block
     if (blockType) {
-      const block = this.blocks.create(
-        x * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
-        y * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
-        blockType
-      );
-      block.setOrigin(0.5, 0.5);
-      block.body.setSize(this.BLOCK_SIZE, this.BLOCK_SIZE);
-      block.blockType = blockType;
-      block.gridX = x;
-      block.gridY = y;
-      this.world[x][y] = block;
+      // Store data
+      this.world[x][y] = { blockType };
+      
+      // Create visual block if blocks group exists
+      if (this.blocks) {
+        const block = this.createVisualBlock(x, y, blockType);
+        this.world[x][y].sprite = block;
+      }
     }
     
-    // Send to multiplayer (only for user-initiated changes, not during terrain generation)
-    if (this.isMultiplayer && !skipMultiplayer) {
+    // Sync with multiplayer if not skipped
+    if (!skipMultiplayer && this.isMultiplayer) {
       this.sendWorldChange(x, y, blockType, blockType ? 'place' : 'remove');
     }
   }
@@ -706,6 +732,11 @@ if (window.game && typeof window.game.destroy === 'function') {
   }
   
   initializeWorld() {
+    console.log('=== WORLD INITIALIZATION DEBUG ===');
+    console.log('Initializing world for room:', this.roomId);
+    console.log('World dimensions:', this.WORLD_WIDTH, 'x', this.WORLD_HEIGHT);
+    
+    // Clear existing world
     this.world = [];
     for (let x = 0; x < this.WORLD_WIDTH; x++) {
       this.world[x] = [];
@@ -713,43 +744,277 @@ if (window.game && typeof window.game.destroy === 'function') {
         this.world[x][y] = null;
       }
     }
+    
+    // Clear existing blocks from display
+    if (this.blocks) {
+      console.log('Clearing existing visual blocks');
+      this.blocks.clear(true, true);
+    }
+    
+    console.log('World cleared, ready for terrain generation');
+    console.log('=== END WORLD INITIALIZATION DEBUG ===');
   }
   
   generateEnhancedTerrain() {
+    // Use room ID as seed for consistent terrain per room
+    const roomSeed = this.hashCode(this.roomId || 'default');
+    console.log('=== TERRAIN GENERATION DEBUG ===');
+    console.log('Room ID:', this.roomId);
+    console.log('Room Seed:', roomSeed);
+    console.log('Hash of room ID:', this.roomId, '=', roomSeed);
+    
+    // Create a seeded random number generator
+    const seedRandom = (seed) => {
+      let x = Math.sin(seed) * 10000;
+      return () => {
+        x = Math.sin(x) * 10000;
+        return x - Math.floor(x);
+      };
+    };
+    
+    const random = seedRandom(roomSeed);
+    
+    // Test the random generator
+    console.log('First 5 random values for room', this.roomId, ':', [
+      random(), random(), random(), random(), random()
+    ]);
+    
+    // Reset random generator for actual terrain generation
+    const terrainRandom = seedRandom(roomSeed);
+    
     const groundLevel = Math.floor(this.WORLD_HEIGHT * 0.6);
+    console.log('Ground level:', groundLevel);
+    
+    let blockCounts = {};
     
     for (let x = 0; x < this.WORLD_WIDTH; x++) {
-      const height = groundLevel + Math.floor(Math.sin(x * 0.05) * 8);
+      // Use seeded random for height variation
+      const height = groundLevel + Math.floor(Math.sin((x + roomSeed) * 0.05) * 8);
       
       for (let y = height; y < this.WORLD_HEIGHT; y++) {
-        let blockType;
+        let blockType = 'dirt';
+        const depth = y - height;
+        const randomValue = terrainRandom(); // Use seeded random
+        
+        // Surface layer
         if (y === height) {
           blockType = 'grass';
-        } else if (y < height + 5) {
-          blockType = 'dirt';
-        } else if (y < height + 15) {
-          blockType = 'stone';
-        } else {
-          blockType = Math.random() < 0.1 ? 'diamond' : 'stone';
+        }
+        // Shallow underground (1-5 blocks deep)
+        else if (depth <= 5) {
+          if (randomValue < 0.1) blockType = 'stone';
+          else if (randomValue < 0.15) blockType = 'coal';
+          else if (randomValue < 0.18) blockType = 'sand';
+          else blockType = 'dirt';
+        }
+        // Medium depth (6-15 blocks deep)
+        else if (depth <= 15) {
+          if (randomValue < 0.3) blockType = 'stone';
+          else if (randomValue < 0.4) blockType = 'coal';
+          else if (randomValue < 0.45) blockType = 'iron';
+          else if (randomValue < 0.48) blockType = 'sand';
+          else blockType = 'dirt';
+        }
+        // Deep underground (16+ blocks deep)
+        else {
+          if (randomValue < 0.4) blockType = 'stone';
+          else if (randomValue < 0.5) blockType = 'coal';
+          else if (randomValue < 0.58) blockType = 'iron';
+          else if (randomValue < 0.63) blockType = 'gold';
+          else if (randomValue < 0.66) blockType = 'diamond';
+          else if (randomValue < 0.68) blockType = 'emerald';
+          else if (randomValue < 0.7) blockType = 'obsidian';
+          else if (depth > 25 && randomValue < 0.72) blockType = 'bedrock';
+          else blockType = 'stone';
         }
         
-        this.applyWorldChange(x, y, blockType, true); // Skip multiplayer sync during terrain generation
+        // Count block types for debugging
+        blockCounts[blockType] = (blockCounts[blockType] || 0) + 1;
+        
+        // Store in world data (don't create visual blocks yet)
+        this.world[x][y] = { blockType };
       }
       
-      // Add trees and ores
-      if (Math.random() < 0.08 && height > 10) {
-        for (let treeY = height - 4; treeY < height; treeY++) {
-          if (treeY >= 0) this.applyWorldChange(x, treeY, 'wood', true); // Skip multiplayer sync
+      // Add trees on surface (using seeded random)
+      if (terrainRandom() < 0.12 && height > 10) {
+        const treeHeight = 3 + Math.floor(terrainRandom() * 3);
+        for (let i = 1; i <= treeHeight; i++) {
+          if (height - i >= 0) {
+            this.world[x][height - i] = { blockType: 'wood' };
+            blockCounts['wood'] = (blockCounts['wood'] || 0) + 1;
+          }
         }
       }
       
-      // Add random ores
-      if (Math.random() < 0.05) {
-        const oreY = height + Math.floor(Math.random() * 10) + 5;
-        if (oreY < this.WORLD_HEIGHT) {
-          const oreType = Math.random() < 0.3 ? 'iron' : (Math.random() < 0.1 ? 'diamond' : 'gold');
-          this.applyWorldChange(x, oreY, oreType, true); // Skip multiplayer sync
+      // Add water bodies (using seeded random)
+      if (terrainRandom() < 0.03 && x > 5 && x < this.WORLD_WIDTH - 5) {
+        const waterWidth = 2 + Math.floor(terrainRandom() * 4);
+        for (let wx = 0; wx < waterWidth && x + wx < this.WORLD_WIDTH; wx++) {
+          this.world[x + wx][height] = { blockType: 'water' };
+          blockCounts['water'] = (blockCounts['water'] || 0) + 1;
         }
+      }
+      
+      // Add rare lava pockets deep underground (using seeded random)
+      if (terrainRandom() < 0.015) {
+        const lavaDepth = height + 20 + Math.floor(terrainRandom() * 10);
+        if (lavaDepth < this.WORLD_HEIGHT) {
+          this.world[x][lavaDepth] = { blockType: 'lava' };
+          blockCounts['lava'] = (blockCounts['lava'] || 0) + 1;
+        }
+      }
+    }
+    
+    console.log('Block distribution for room', this.roomId, ':', blockCounts);
+    console.log('Terrain generation completed for room:', this.roomId);
+    console.log('=== END TERRAIN GENERATION DEBUG ===');
+  }
+  
+  createVisualBlocks() {
+    console.log('Creating visual blocks...');
+    
+    // Create visual blocks for all terrain data
+    for (let x = 0; x < this.WORLD_WIDTH; x++) {
+      for (let y = 0; y < this.WORLD_HEIGHT; y++) {
+        if (this.world[x][y] && this.world[x][y].blockType) {
+          this.createVisualBlock(x, y, this.world[x][y].blockType);
+        }
+      }
+    }
+    
+    console.log('Visual blocks creation completed');
+  }
+  
+  createVisualBlock(x, y, blockType) {
+    if (!this.blocks) return;
+    
+    const block = this.blocks.create(
+      x * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
+      y * this.BLOCK_SIZE + this.BLOCK_SIZE / 2,
+      blockType
+    );
+    block.setOrigin(0.5, 0.5);
+    block.body.setSize(this.BLOCK_SIZE, this.BLOCK_SIZE);
+    block.blockType = blockType;
+    block.gridX = x;
+    block.gridY = y;
+    
+    // Store reference in world data
+    this.world[x][y].sprite = block;
+    
+    return block;
+  }
+  
+  // Hash function to convert room ID to seed
+  hashCode(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+  
+  createCelestialBodies() {
+    const worldCenterX = (this.WORLD_WIDTH * this.BLOCK_SIZE) / 2;
+    const skyHeight = 100; // Height above the world
+    
+    // Create sun
+    this.sun = this.add.circle(worldCenterX, skyHeight, 30, 0xFFD700); // Golden sun
+    this.sun.setDepth(5);
+    this.sun.setAlpha(1);
+    
+    // Create moon
+    this.moon = this.add.circle(worldCenterX, skyHeight, 25, 0xC0C0C0); // Silver moon
+    this.moon.setDepth(5);
+    this.moon.setAlpha(0);
+    
+    // Add sun rays effect
+    this.sunRays = this.add.graphics();
+    this.sunRays.setDepth(4);
+    
+    this.updateCelestialBodies();
+  }
+  
+  updateCelestialBodies() {
+    if (!this.sun || !this.moon || !this.dayNightCycle.startTime) {
+      console.warn('Celestial bodies not ready:', {
+        sun: !!this.sun,
+        moon: !!this.moon,
+        startTime: !!this.dayNightCycle.startTime
+      });
+      return;
+    }
+    
+    const worldWidth = this.WORLD_WIDTH * this.BLOCK_SIZE;
+    const skyHeight = 100;
+    const arcHeight = 200; // How high the sun/moon arc
+    
+    // Calculate progress through the full cycle (0 to 1)
+    const totalCycleDuration = this.dayNightCycle.cycleDuration;
+    const totalElapsed = (this.time.now - this.dayNightCycle.startTime) % totalCycleDuration;
+    const cycleProgress = totalElapsed / totalCycleDuration;
+    
+    // Debug logging every 10 seconds
+    if (Math.floor(totalElapsed / 10000) !== Math.floor((totalElapsed - this.time.delta) / 10000)) {
+      console.log('Celestial Bodies Debug:', {
+        totalElapsed: Math.floor(totalElapsed / 1000) + 's',
+        cycleProgress: Math.round(cycleProgress * 100) + '%',
+        isDay: this.dayNightCycle.isDay
+      });
+    }
+    
+    // Sun position (moves from left to right during first half of cycle)
+    const sunProgress = (cycleProgress * 2) % 2; // 0 to 2
+    const sunAngle = Math.min(sunProgress, 1) * Math.PI; // 0 to PI for half circle
+    const sunX = worldWidth * 0.1 + (worldWidth * 0.8) * (sunAngle / Math.PI);
+    const sunY = skyHeight - Math.sin(sunAngle) * arcHeight;
+    
+    // Moon position (moves during second half of cycle)
+    const moonProgress = ((cycleProgress + 0.5) * 2) % 2; // Offset by half cycle
+    const moonAngle = Math.min(moonProgress, 1) * Math.PI;
+    const moonX = worldWidth * 0.1 + (worldWidth * 0.8) * (moonAngle / Math.PI);
+    const moonY = skyHeight - Math.sin(moonAngle) * arcHeight;
+    
+    // Update positions
+    this.sun.setPosition(sunX, sunY);
+    this.moon.setPosition(moonX, moonY);
+    
+    // Update visibility based on day/night and position
+    if (this.dayNightCycle.isDay) {
+      // Day time - sun visible, moon hidden
+      this.sun.setAlpha(Math.max(0.8, Math.sin(sunAngle)));
+      this.moon.setAlpha(0.1);
+    } else {
+      // Night time - moon visible, sun hidden
+      this.sun.setAlpha(0.1);
+      this.moon.setAlpha(Math.max(0.8, Math.sin(moonAngle)));
+    }
+    
+    // Update sun rays
+    this.updateSunRays();
+  }
+  
+  updateSunRays() {
+    if (!this.sunRays || !this.sun) return;
+    
+    this.sunRays.clear();
+    
+    if (this.dayNightCycle.isDay && this.sun.alpha > 0.3) {
+      this.sunRays.lineStyle(2, 0xFFD700, this.sun.alpha * 0.5);
+      
+      // Draw sun rays
+      const rayCount = 8;
+      const rayLength = 50;
+      for (let i = 0; i < rayCount; i++) {
+        const angle = (i / rayCount) * Math.PI * 2;
+        const startX = this.sun.x + Math.cos(angle) * 35;
+        const startY = this.sun.y + Math.sin(angle) * 35;
+        const endX = this.sun.x + Math.cos(angle) * (35 + rayLength);
+        const endY = this.sun.y + Math.sin(angle) * (35 + rayLength);
+        
+        this.sunRays.lineBetween(startX, startY, endX, endY);
       }
     }
   }
@@ -797,6 +1062,9 @@ if (window.game && typeof window.game.destroy === 'function') {
     
     // Day/Night cycle updates
     this.updateDayNightCycle();
+    
+    // Update celestial bodies (sun and moon)
+    this.updateCelestialBodies();
     
     // Mob system updates (only spawn at night and if enabled)
     if (!this.dayNightCycle.isDay && this.mobsEnabled) {
@@ -1633,14 +1901,27 @@ if (window.game && typeof window.game.destroy === 'function') {
   updateDayNightCycle() {
     this.dayNightCycle.cycleTime += this.time.delta;
     
+    // Debug logging every 5 seconds
+    if (Math.floor(this.dayNightCycle.cycleTime / 5000) !== Math.floor((this.dayNightCycle.cycleTime - this.time.delta) / 5000)) {
+      console.log('Day/Night Debug:', {
+        isDay: this.dayNightCycle.isDay,
+        cycleTime: Math.floor(this.dayNightCycle.cycleTime / 1000) + 's',
+        dayDuration: this.dayNightCycle.dayDuration / 1000 + 's',
+        nightDuration: this.dayNightCycle.nightDuration / 1000 + 's',
+        timeLeft: Math.floor((this.dayNightCycle.isDay ? this.dayNightCycle.dayDuration : this.dayNightCycle.nightDuration) - this.dayNightCycle.cycleTime) / 1000 + 's'
+      });
+    }
+    
     const wasDay = this.dayNightCycle.isDay;
     
     // Check if we should switch between day and night
     if (this.dayNightCycle.isDay && this.dayNightCycle.cycleTime >= this.dayNightCycle.dayDuration) {
+      console.log('Switching to NIGHT');
       this.dayNightCycle.isDay = false;
       this.dayNightCycle.cycleTime = 0;
       this.startNightTransition();
     } else if (!this.dayNightCycle.isDay && this.dayNightCycle.cycleTime >= this.dayNightCycle.nightDuration) {
+      console.log('Switching to DAY');
       this.dayNightCycle.isDay = true;
       this.dayNightCycle.cycleTime = 0;
       this.startDayTransition();
@@ -2664,7 +2945,7 @@ if (window.game && typeof window.game.destroy === 'function') {
   // Resource Counter System
   initializeResourceCounters() {
     // Initialize all resource counters to 0
-    const resourceTypes = ['wood', 'stone', 'iron', 'gold', 'diamond', 'dirt', 'grass'];
+    const resourceTypes = ['wood', 'stone', 'iron', 'gold', 'diamond', 'dirt', 'grass', 'water', 'lava', 'sand', 'coal', 'emerald', 'obsidian', 'bedrock'];
     resourceTypes.forEach(resource => {
       this.resourceCounters.set(resource, resource === 'dirt' || resource === 'grass' ? 10 : 0);
     });
@@ -2784,8 +3065,15 @@ if (window.game && typeof window.game.destroy === 'function') {
       'iron': this.selectedWeapon === 'sword' ? 3 : 1,    // Sword is best for metals
       'gold': this.selectedWeapon === 'sword' ? 3 : 1,    // Sword is best for metals
       'diamond': this.selectedWeapon === 'sword' ? 4 : 1, // Sword is best for precious metals
+      'coal': this.selectedWeapon === 'sword' ? 2 : 1,    // Sword works on coal
+      'emerald': this.selectedWeapon === 'sword' ? 4 : 1, // Sword is best for gems
+      'obsidian': this.selectedWeapon === 'sword' ? 2 : 1, // Sword needed for obsidian
       'dirt': 2, // Always easy to dig
-      'grass': 2  // Always easy to dig
+      'grass': 2, // Always easy to dig
+      'sand': 2, // Easy to dig
+      'water': 1, // Can be collected
+      'lava': 1, // Dangerous to collect
+      'bedrock': this.selectedWeapon === 'sword' ? 1 : 0 // Only sword can break bedrock
     };
     
     return toolBonuses[blockType] || baseQuantity;

@@ -102,6 +102,9 @@ export default function MinecraftGame() {
   const { data: session, status } = useSession()
   const router = useRouter()
   const [gameLoaded, setGameLoaded] = useState(false)
+  const [gameLoadError, setGameLoadError] = useState<string | null>(null)
+  const [loadingTimeout, setLoadingTimeout] = useState<NodeJS.Timeout | null>(null)
+  const [isInitializing, setIsInitializing] = useState(false)
   const [saveStatus, setSaveStatus] = useState("")
   const [roomId, setRoomId] = useState("default")
   const [showRoomSelector, setShowRoomSelector] = useState(true)
@@ -113,7 +116,14 @@ export default function MinecraftGame() {
     gold: false,
     diamond: false,
     dirt: true, // Always available
-    grass: true // Always available
+    grass: true, // Always available
+    water: false,
+    lava: false,
+    sand: false,
+    coal: false,
+    emerald: false,
+    obsidian: false,
+    bedrock: false
   })
   
   const [resourceCounts, setResourceCounts] = useState({
@@ -123,7 +133,14 @@ export default function MinecraftGame() {
     gold: 0,
     diamond: 0,
     dirt: 10, // Start with some basic resources
-    grass: 10 // Start with some basic resources
+    grass: 10, // Start with some basic resources
+    water: 0,
+    lava: 0,
+    sand: 0,
+    coal: 0,
+    emerald: 0,
+    obsidian: 0,
+    bedrock: 0
   })
   const [showGameUI, setShowGameUI] = useState(true)
   const [selectedBlock, setSelectedBlock] = useState("grass")
@@ -271,24 +288,42 @@ export default function MinecraftGame() {
   }
 
   const loadGame = useCallback(async () => {
+    // Prevent multiple simultaneous calls
+    if (isInitializing) {
+      console.log('🔄 Game already initializing, skipping...');
+      return;
+    }
+    
+    console.log('🎮 LoadGame called for room:', roomId);
+    setIsInitializing(true);
+    
     try {
+      console.log('📡 Fetching saved game state...');
+      setGameLoadError(null); // Clear any previous errors
+      
       // Load saved game state
       const response = await fetch("/api/games/minecraft/save")
       if (response.ok) {
         const savedState = await response.json()
-        console.log("Loaded game state:", savedState)
+        console.log("✅ Loaded game state:", savedState)
         
         // Initialize the game with saved state and room ID
         initializeMinecraftGame(savedState, roomId)
       } else {
+        console.log("🆕 No saved state, initializing new game");
         // Initialize new game
         initializeMinecraftGame(null, roomId)
       }
     } catch (error) {
-      console.error("Error loading game:", error)
+      console.error("❌ Error loading game:", error)
+      setGameLoadError(`Failed to load game: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // Still try to initialize the game
       initializeMinecraftGame(null, roomId)
+    } finally {
+      // Reset initializing state after a delay
+      setTimeout(() => setIsInitializing(false), 1000);
     }
-  }, [roomId])
+  }, [roomId, isInitializing])
 
   useEffect(() => {
     // Allow playing without authentication for demo purposes
@@ -299,9 +334,15 @@ export default function MinecraftGame() {
       }
     }
 
-    // Load game regardless of authentication status
-    loadGame()
-    
+    // Only load game once when component mounts and we have a roomId
+    if (roomId && !gameLoaded && !gameLoadError && !isInitializing) {
+      console.log('🎮 Initial game load for room:', roomId);
+      loadGame()
+    }
+  }, [roomId]) // Only depend on roomId
+  
+  // Separate useEffect for other initialization
+  useEffect(() => {
     // Load bank data
     loadBankData()
     
@@ -375,7 +416,37 @@ export default function MinecraftGame() {
         }
       }
     }
-  }, [status, router, roomId, loadGame, loadBankData, loadPlayerInventory])
+  }, []) // Empty dependency array - only run once on mount
+
+  // Check for game instance periodically
+  useEffect(() => {
+    if (gameLoaded || isInitializing) return; // Already loaded or initializing
+    
+    const checkGameInstance = () => {
+      if (window.minecraftGame && typeof window.minecraftGame.getGameState === 'function') {
+        console.log('✅ Game instance detected, marking as loaded');
+        setGameLoaded(true);
+        setGameLoadError(null);
+        setIsInitializing(false);
+        
+        // Clear timeout if game loaded successfully
+        if (loadingTimeout) {
+          clearTimeout(loadingTimeout);
+          setLoadingTimeout(null);
+        }
+      }
+    };
+    
+    // Check immediately
+    checkGameInstance();
+    
+    // Check periodically
+    const interval = setInterval(checkGameInstance, 1000);
+    
+    return () => {
+      clearInterval(interval);
+    };
+  }, [gameLoaded, isInitializing, loadingTimeout]);
 
   // Expose resource update function to game
   useEffect(() => {
@@ -392,13 +463,32 @@ export default function MinecraftGame() {
   }, [])
 
   const initializeMinecraftGame = (savedState: { data: unknown; score: number } | null, selectedRoomId: string) => {
+    console.log('🎮 Starting game initialization...', { savedState, selectedRoomId });
+    
+    // Clear any existing timeout
+    if (loadingTimeout) {
+      clearTimeout(loadingTimeout);
+    }
+    
+    // Set a timeout to detect if game fails to load
+    const timeout = setTimeout(() => {
+      if (!gameLoaded && !window.minecraftGame) {
+        console.error('❌ Game loading timeout - game failed to initialize within 15 seconds');
+        setGameLoadError('Game failed to load. This might be due to a network issue or script error. Please refresh the page.');
+      }
+    }, 15000); // 15 second timeout
+    
+    setLoadingTimeout(timeout);
+    
     // Clean up any existing game instances and scripts
     if (window.minecraftGame && typeof window.minecraftGame.cleanup === 'function') {
+      console.log('🧹 Cleaning up existing game instance');
       window.minecraftGame.cleanup()
     }
     
     // Destroy existing Phaser game instance
     if (window.game && typeof window.game.destroy === 'function') {
+      console.log('🧹 Destroying existing Phaser game');
       window.game.destroy(true)
       window.game = null
     }
@@ -406,12 +496,14 @@ export default function MinecraftGame() {
     // Clear the game container
     const gameContainer = document.getElementById('minecraft-game-container')
     if (gameContainer) {
+      console.log('🧹 Clearing game container');
       const canvases = gameContainer.querySelectorAll('canvas')
       canvases.forEach(canvas => canvas.remove())
     }
     
     // Remove ALL existing game scripts (more thorough cleanup)
     const existingGameScripts = document.querySelectorAll('script[data-minecraft-game]')
+    console.log('🧹 Removing existing game scripts:', existingGameScripts.length);
     existingGameScripts.forEach(script => {
       script.remove()
     })
@@ -438,12 +530,14 @@ export default function MinecraftGame() {
           window.gc()
         }
       } catch (e) {
-        // Ignore errors if properties can't be deleted
+        console.warn('⚠️ Cleanup error (non-critical):', e);
       }
     }
     
     // Use a longer timeout to ensure cleanup is complete before creating new script
     setTimeout(() => {
+      console.log('🚀 Starting game creation after cleanup delay');
+      
       // Additional cleanup for enhanced game
       if (typeof window !== 'undefined') {
         try {
@@ -457,27 +551,83 @@ export default function MinecraftGame() {
       
       // Check if Phaser is already loaded
       if (window.Phaser) {
-        // Phaser already loaded, create game directly
-        const gameScript = document.createElement("script")
-        gameScript.setAttribute('data-minecraft-game', 'true')
-        gameScript.setAttribute('data-timestamp', Date.now().toString())
-        gameScript.textContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId)
-        document.head.appendChild(gameScript)
-        setGameLoaded(true)
+        console.log('✅ Phaser already loaded, creating game directly');
+        try {
+          // Phaser already loaded, create game directly
+          const gameScript = document.createElement("script")
+          gameScript.setAttribute('data-minecraft-game', 'true')
+          gameScript.setAttribute('data-timestamp', Date.now().toString())
+          
+          const scriptContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId);
+          console.log('📝 Generated script length:', scriptContent.length, 'characters');
+          
+          if (scriptContent.length < 1000) {
+            console.error('❌ Generated script seems too short, might be invalid');
+            setGameLoadError('Game script generation failed. Please refresh the page.');
+            return;
+          }
+          
+          gameScript.textContent = scriptContent;
+          
+          // Add error handling to the script
+          gameScript.onerror = (error) => {
+            console.error('❌ Game script error:', error);
+            setGameLoadError('Game script failed to execute. Please refresh the page.');
+          };
+          
+          document.head.appendChild(gameScript)
+          console.log('✅ Game script added to document');
+          
+          // Don't set gameLoaded here, let the detection mechanism handle it
+        } catch (error) {
+          console.error('❌ Error creating game script:', error);
+          setGameLoadError(`Failed to create game script: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
       } else {
+        console.log('📦 Loading Phaser first...');
         // Load Phaser first
         const phaserScript = document.createElement("script")
         phaserScript.src = "https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"
         phaserScript.onload = () => {
-          // Create game script
-          const gameScript = document.createElement("script")
-          gameScript.setAttribute('data-minecraft-game', 'true')
-          gameScript.setAttribute('data-timestamp', Date.now().toString())
-          gameScript.textContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId)
-          document.head.appendChild(gameScript)
-          setGameLoaded(true)
+          console.log('✅ Phaser loaded successfully, creating game');
+          try {
+            // Create game script
+            const gameScript = document.createElement("script")
+            gameScript.setAttribute('data-minecraft-game', 'true')
+            gameScript.setAttribute('data-timestamp', Date.now().toString())
+            
+            const scriptContent = getEnhancedMinecraftGameCode(savedState, selectedRoomId);
+            console.log('📝 Generated script length:', scriptContent.length, 'characters');
+            
+            if (scriptContent.length < 1000) {
+              console.error('❌ Generated script seems too short, might be invalid');
+              setGameLoadError('Game script generation failed. Please refresh the page.');
+              return;
+            }
+            
+            gameScript.textContent = scriptContent;
+            
+            // Add error handling to the script
+            gameScript.onerror = (error) => {
+              console.error('❌ Game script error:', error);
+              setGameLoadError('Game script failed to execute. Please refresh the page.');
+            };
+            
+            document.head.appendChild(gameScript)
+            console.log('✅ Game script added to document');
+            
+            // Don't set gameLoaded here, let the detection mechanism handle it
+          } catch (error) {
+            console.error('❌ Error creating game script after Phaser load:', error);
+            setGameLoadError(`Failed to create game script: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
         }
+        phaserScript.onerror = (error) => {
+          console.error('❌ Failed to load Phaser:', error);
+          setGameLoadError('Failed to load Phaser game engine. Please check your internet connection and refresh the page.');
+        };
         document.head.appendChild(phaserScript)
+        console.log('📦 Phaser script added to document');
       }
     }, 300) // Increased delay to ensure cleanup is complete
   }
@@ -524,9 +674,38 @@ export default function MinecraftGame() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-900 via-purple-900 to-green-900">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-400 mx-auto mb-4"></div>
-          <div className="text-xl font-semibold text-white mb-2">Loading Minecraft Game</div>
-          <div className="text-sm text-gray-300">Preparing your adventure...</div>
+          {gameLoadError ? (
+            <>
+              <div className="text-red-400 text-6xl mb-4">⚠️</div>
+              <div className="text-xl font-semibold text-white mb-2">Game Loading Failed</div>
+              <div className="text-sm text-gray-300 mb-4 max-w-md mx-auto">{gameLoadError}</div>
+              <div className="space-y-2">
+                <button
+                  onClick={() => {
+                    setGameLoadError(null);
+                    setGameLoaded(false);
+                    loadGame();
+                  }}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 mr-2"
+                >
+                  Try Again
+                </button>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+                >
+                  Refresh Page
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-400 mx-auto mb-4"></div>
+              <div className="text-xl font-semibold text-white mb-2">Loading Minecraft Game</div>
+              <div className="text-sm text-gray-300">Preparing your adventure...</div>
+              <div className="text-xs text-gray-400 mt-2">This may take a few seconds...</div>
+            </>
+          )}
         </div>
       </div>
     )
@@ -716,7 +895,7 @@ export default function MinecraftGame() {
         {/* Game UI Overlay */}
         {showGameUI && (
           <div id="game-ui" className="absolute top-4 left-4 text-white z-50 animate-in slide-in-from-left duration-300">
-            <div className="bg-gray-900/80 backdrop-blur-md rounded-xl p-4 space-y-3 border border-gray-700 shadow-lg">
+            <div className="bg-gray-900/80 backdrop-blur-md rounded-xl p-2 space-y-2 border border-gray-700 shadow-lg max-w-xs">
               <div className="flex items-center space-x-2">
                 <div className="text-red-400">❤️</div>
                 <div className="flex-1">
@@ -725,14 +904,14 @@ export default function MinecraftGame() {
                     <div className="bg-red-500 h-full transition-all duration-300" style={{width: '100%'}}></div>
                   </div>
                 </div>
-                <span id="health-display" className="text-sm font-bold">100</span>
+                <span id="health-display" className="text-xs font-bold">100</span>
               </div>
               
               <div className="flex items-center space-x-2">
                 <div className="text-yellow-400">⭐</div>
                 <div className="flex-1">
                   <div className="text-xs text-gray-400">Score</div>
-                  <span id="score-display" className="text-lg font-bold text-yellow-400">0</span>
+                  <span id="score-display" className="text-sm font-bold text-yellow-400">0</span>
                 </div>
               </div>
               
@@ -779,9 +958,9 @@ export default function MinecraftGame() {
               </div>
               
               {/* Resource Status Display */}
-              <div className="bg-gray-900/50 rounded-lg p-3 border border-gray-700">
+              <div className="bg-gray-900/50 rounded-lg p-2 border border-gray-700 max-w-xs">
                 <div className="text-xs text-gray-400 mb-2">📦 Resource Inventory</div>
-                <div className="grid grid-cols-4 gap-1">
+                <div className="grid grid-cols-5 gap-1 max-h-32 overflow-y-auto">
                   {Object.entries(gatheredResources).map(([resource, gathered]) => (
                     <div 
                       key={resource}
@@ -790,9 +969,9 @@ export default function MinecraftGame() {
                           ? 'bg-green-900/50 text-green-300' 
                           : 'bg-gray-800/50 text-gray-500'
                       }`}
-                      title={`${resource.charAt(0).toUpperCase() + resource.slice(1)} - ${gathered ? 'Available' : 'Walk near to gather'}`}
+                      title={`${resource.charAt(0).toUpperCase() + resource.slice(1)} - ${gathered ? 'Available' : 'Mine blocks to gather'}`}
                     >
-                      <span className="text-sm">
+                      <span className="text-xs">
                         {resource === 'wood' && '🪵'}
                         {resource === 'stone' && '🪨'}
                         {resource === 'iron' && '⚙️'}
@@ -800,6 +979,13 @@ export default function MinecraftGame() {
                         {resource === 'diamond' && '💎'}
                         {resource === 'dirt' && '🟫'}
                         {resource === 'grass' && '🌱'}
+                        {resource === 'water' && '💧'}
+                        {resource === 'lava' && '🌋'}
+                        {resource === 'sand' && '🏖️'}
+                        {resource === 'coal' && '⚫'}
+                        {resource === 'emerald' && '💚'}
+                        {resource === 'obsidian' && '⚫'}
+                        {resource === 'bedrock' && '🗿'}
                       </span>
                       <span className="text-xs font-bold">
                         {(resourceCounts as any)[resource] || 0}
@@ -839,9 +1025,9 @@ export default function MinecraftGame() {
         )}
 
         {showInstructions && (
-          <div id="game-instructions" className="absolute top-4 right-4 text-white z-50 animate-in slide-in-from-right duration-300">
-            <div className="bg-gray-900/80 backdrop-blur-md rounded-xl p-4 text-sm border border-gray-700 shadow-lg max-w-xs">
-              <div className="flex items-center justify-between mb-3">
+          <div id="game-instructions" className="absolute top-4 right-4 text-white z-[60] animate-in slide-in-from-right duration-300">
+            <div className="bg-gray-900/90 backdrop-blur-md rounded-xl p-3 text-sm border border-gray-700 shadow-lg max-w-sm">
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center space-x-2">
                   <div className="text-yellow-400">🎮</div>
                   <div className="font-bold text-yellow-400">Controls</div>

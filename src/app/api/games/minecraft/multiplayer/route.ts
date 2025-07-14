@@ -1,7 +1,4 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getServerSession } from "next-auth/next"
-import { authOptions } from "@/lib/auth"
-import type { Session } from "next-auth"
 
 // Enhanced multiplayer room structure
 interface Player {
@@ -10,218 +7,171 @@ interface Player {
   x: number
   y: number
   health: number
-  armor: number
-  weapon: string
-  inventory: Record<string, number>
-  lastUpdate: number
+  lastSeen: number
+  selectedBlock: string
+  selectedWeapon: string
+  selectedArmor: string
 }
 
-interface GameRoom {
+interface Room {
+  id: string
   players: Map<string, Player>
-  world: (string | null)[][]
-  worldWidth: number
-  worldHeight: number
-  lastWorldUpdate: number
   worldChanges: Array<{
     x: number
     y: number
     blockType: string | null
-    playerId: string
     timestamp: number
+    playerId: string
   }>
+  lastActivity: number
 }
 
-// In-memory storage for game rooms (in production, use Redis or similar)
-const gameRooms = new Map<string, GameRoom>()
+// In-memory storage for multiplayer rooms
+const rooms = new Map<string, Room>()
 
-export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions) as Session | null
-  
-  // Allow guest users to play
-  const userId = session?.user?.id || `guest-${Date.now()}`
-  
-  const { searchParams } = new URL(req.url)
-  const roomId = searchParams.get('roomId') || 'default'
-
-  // Get or create room with larger world size
-  if (!gameRooms.has(roomId)) {
-    const worldWidth = 150  // Increased from 50
-    const worldHeight = 80  // Increased from 30
-    const emptyWorld: (string | null)[][] = []
-    
-    for (let x = 0; x < worldWidth; x++) {
-      emptyWorld[x] = []
-      for (let y = 0; y < worldHeight; y++) {
-        emptyWorld[x][y] = null
-      }
+// Clean up inactive rooms (older than 1 hour)
+setInterval(() => {
+  const oneHourAgo = Date.now() - 60 * 60 * 1000
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.lastActivity < oneHourAgo) {
+      rooms.delete(roomId)
     }
-    
-    gameRooms.set(roomId, {
-      players: new Map(),
-      world: emptyWorld,
-      worldWidth,
-      worldHeight,
-      lastWorldUpdate: Date.now(),
-      worldChanges: []
-    })
   }
-
-  const room = gameRooms.get(roomId)!
-  
-  return NextResponse.json({
-    roomId,
-    players: Array.from(room.players.values()),
-    world: room.world,
-    worldWidth: room.worldWidth,
-    worldHeight: room.worldHeight,
-    lastUpdate: room.lastWorldUpdate,
-    recentChanges: room.worldChanges.slice(-50) // Last 50 changes
-  })
-}
+}, 5 * 60 * 1000) // Check every 5 minutes
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions) as Session | null
-  
-  // Allow guest users to play
-  const userId = session?.user?.id || `guest-${Date.now()}`
-  const userName = session?.user?.name || 'Guest Player'
+  try {
+    // Allow guest users to play without authentication
+    const userId = `guest-${Math.random().toString(36).substr(2, 9)}`
+    const userName = `Guest_${userId.slice(-4)}`
 
-  const { roomId = 'default', action, data } = await req.json()
+    const { roomId, action, data } = await req.json()
 
-  // Get or create room with larger world size
-  if (!gameRooms.has(roomId)) {
-    const worldWidth = 150  // Increased from 50
-    const worldHeight = 80  // Increased from 30
-    const emptyWorld: (string | null)[][] = []
-    
-    for (let x = 0; x < worldWidth; x++) {
-      emptyWorld[x] = []
-      for (let y = 0; y < worldHeight; y++) {
-        emptyWorld[x][y] = null
-      }
+    if (!roomId) {
+      return NextResponse.json({ error: 'Room ID is required' }, { status: 400 })
     }
-    
-    gameRooms.set(roomId, {
-      players: new Map(),
-      world: emptyWorld,
-      worldWidth,
-      worldHeight,
-      lastWorldUpdate: Date.now(),
-      worldChanges: []
-    })
-  }
 
-  const room = gameRooms.get(roomId)!
-
-  switch (action) {
-    case 'join':
-      room.players.set(userId, {
-        id: userId,
-        name: userName,
-        x: data.x || 400,
-        y: data.y || 100,
-        health: data.health || 100,
-        armor: data.armor || 0,
-        weapon: data.weapon || 'none',
-        inventory: data.inventory || {},
-        lastUpdate: Date.now()
+    // Get or create room
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, {
+        id: roomId,
+        players: new Map(),
+        worldChanges: [],
+        lastActivity: Date.now()
       })
-      break
-
-    case 'move':
-      if (room.players.has(userId)) {
-        const player = room.players.get(userId)!
-        player.x = data.x
-        player.y = data.y
-        player.lastUpdate = Date.now()
-      }
-      break
-
-    case 'updatePlayer':
-      if (room.players.has(userId)) {
-        const player = room.players.get(userId)!
-        if (data.health !== undefined) player.health = data.health
-        if (data.armor !== undefined) player.armor = data.armor
-        if (data.weapon !== undefined) player.weapon = data.weapon
-        if (data.inventory !== undefined) player.inventory = data.inventory
-        player.lastUpdate = Date.now()
-      }
-      break
-
-    case 'placeBlock':
-      // Handle individual block placement for better synchronization
-      const { x, y, blockType } = data
-      if (x >= 0 && x < room.worldWidth && y >= 0 && y < room.worldHeight) {
-        room.world[x][y] = blockType
-        room.lastWorldUpdate = Date.now()
-        
-        // Track the change
-        room.worldChanges.push({
-          x,
-          y,
-          blockType,
-          playerId: userId,
-          timestamp: Date.now()
-        })
-        
-        // Keep only last 100 changes to prevent memory issues
-        if (room.worldChanges.length > 100) {
-          room.worldChanges = room.worldChanges.slice(-100)
-        }
-      }
-      break
-
-    case 'removeBlock':
-      // Handle individual block removal
-      const { x: removeX, y: removeY } = data
-      if (removeX >= 0 && removeX < room.worldWidth && removeY >= 0 && removeY < room.worldHeight) {
-        room.world[removeX][removeY] = null
-        room.lastWorldUpdate = Date.now()
-        
-        // Track the change
-        room.worldChanges.push({
-          x: removeX,
-          y: removeY,
-          blockType: null,
-          playerId: userId,
-          timestamp: Date.now()
-        })
-        
-        // Keep only last 100 changes
-        if (room.worldChanges.length > 100) {
-          room.worldChanges = room.worldChanges.slice(-100)
-        }
-      }
-      break
-
-    case 'syncWorld':
-      // Full world sync (fallback)
-      if (data.world && Array.isArray(data.world)) {
-        room.world = data.world
-        room.lastWorldUpdate = Date.now()
-      }
-      break
-
-    case 'leave':
-      room.players.delete(userId)
-      break
-  }
-
-  // Clean up inactive players (older than 60 seconds)
-  const now = Date.now()
-  for (const [playerId, player] of room.players.entries()) {
-    if (now - player.lastUpdate > 60000) {
-      room.players.delete(playerId)
     }
-  }
 
-  return NextResponse.json({
-    success: true,
-    players: Array.from(room.players.values()),
-    world: room.world,
-    worldWidth: room.worldWidth,
-    worldHeight: room.worldHeight,
-    lastUpdate: room.lastWorldUpdate,
-    recentChanges: room.worldChanges.slice(-10) // Last 10 changes for immediate sync
-  })
+    const room = rooms.get(roomId)!
+    room.lastActivity = Date.now()
+
+    switch (action) {
+      case 'join':
+        room.players.set(userId, {
+          id: userId,
+          name: userName,
+          x: data?.x || 400,
+          y: data?.y || 300,
+          health: data?.health || 100,
+          lastSeen: Date.now(),
+          selectedBlock: data?.selectedBlock || 'dirt',
+          selectedWeapon: data?.selectedWeapon || 'sword',
+          selectedArmor: data?.selectedArmor || 'leather'
+        })
+        break
+
+      case 'move':
+        if (room.players.has(userId)) {
+          const player = room.players.get(userId)!
+          player.x = data.x
+          player.y = data.y
+          player.lastSeen = Date.now()
+        }
+        break
+
+      case 'updatePlayer':
+        if (room.players.has(userId)) {
+          const player = room.players.get(userId)!
+          Object.assign(player, data, { lastSeen: Date.now() })
+        }
+        break
+
+      case 'placeBlock':
+      case 'removeBlock':
+        room.worldChanges.push({
+          x: data.x,
+          y: data.y,
+          blockType: action === 'placeBlock' ? data.blockType : null,
+          timestamp: Date.now(),
+          playerId: userId
+        })
+        
+        // Keep only last 1000 changes
+        if (room.worldChanges.length > 1000) {
+          room.worldChanges = room.worldChanges.slice(-1000)
+        }
+        break
+
+      case 'leave':
+        room.players.delete(userId)
+        break
+    }
+
+    return NextResponse.json({ 
+      success: true,
+      playerId: userId,
+      roomId: roomId
+    })
+  } catch (error) {
+    console.error('Multiplayer POST error:', error)
+    return NextResponse.json({ 
+      success: false, 
+      error: 'Internal server error' 
+    }, { status: 500 })
+  }
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const roomId = searchParams.get('roomId')
+
+    if (!roomId) {
+      return NextResponse.json({ error: 'Room ID is required' }, { status: 400 })
+    }
+
+    const room = rooms.get(roomId)
+    if (!room) {
+      return NextResponse.json({
+        players: [],
+        worldChanges: [],
+        roomExists: false
+      })
+    }
+
+    // Remove inactive players (not seen for 30 seconds)
+    const thirtySecondsAgo = Date.now() - 30 * 1000
+    for (const [playerId, player] of room.players.entries()) {
+      if (player.lastSeen < thirtySecondsAgo) {
+        room.players.delete(playerId)
+      }
+    }
+
+    // Convert Map to Array for JSON response
+    const players = Array.from(room.players.values())
+
+    return NextResponse.json({
+      players,
+      worldChanges: room.worldChanges,
+      roomExists: true,
+      playerCount: players.length
+    })
+  } catch (error) {
+    console.error('Multiplayer GET error:', error)
+    return NextResponse.json({ 
+      players: [], 
+      worldChanges: [],
+      roomExists: false,
+      error: 'Internal server error' 
+    }, { status: 500 })
+  }
 }
